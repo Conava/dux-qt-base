@@ -113,10 +113,10 @@ bool copyReadback(const QRhiReadbackResult& result, QImage* image) {
 	return true;
 }
 
-// Logical window damage as the buffer pixels it touches.
-QRegion bufferRegion(const QRegion& damage, qreal scale, QSize size) {
+// The whole units of `size` a region touches once scaled.
+QRegion scaledRegion(const QRegion& unscaled, qreal scale, QSize size) {
 	QRegion region;
-	for (const auto& rect: damage) {
+	for (const auto& rect: unscaled) {
 		const auto scaled = QRectF(rect.topLeft().toPointF() * scale, rect.size().toSizeF() * scale);
 		region += scaled.toAlignedRect();
 	}
@@ -603,7 +603,8 @@ void WaylandRenderControl::renderFrame() {
 	const auto frame = std::make_shared<Frame>();
 	frame->surfaceSize = waylandWindow->surfaceSize();
 	frame->scale = waylandWindow->scale();
-	frame->contentSize = window->size() * frame->scale;
+	frame->pixelRatio = window->effectiveDevicePixelRatio();
+	frame->contentSize = waylandWindow->geometry().size() * frame->scale;
 	frame->color = window->color();
 	frame->revision = this->commitRevision;
 	frame->serial = ++FRAME_SERIAL;
@@ -715,10 +716,10 @@ QRect WaylandRenderControl::clipRect(const Frame& frame, const QRegion& changed)
 // which the damage tracker would count as damage.
 void WaylandRenderControl::applyClip(const Frame& frame) {
 	auto& clip = *this->sceneClip;
-	const auto window = QRectF(QPointF(), frame.contentSize.toSizeF() / frame.scale);
+	const auto window = QRectF(QPointF(), frame.contentSize.toSizeF() / frame.pixelRatio);
 	const auto rect = QRectF(
-	    frame.clip.topLeft().toPointF() / frame.scale,
-	    frame.clip.size().toSizeF() / frame.scale
+	    frame.clip.topLeft().toPointF() / frame.pixelRatio,
+	    frame.clip.size().toSizeF() / frame.pixelRatio
 	);
 
 	clip.fillClip.setClipRect(frame.clip.isEmpty() ? QRectF() : rect);
@@ -743,12 +744,12 @@ void WaylandRenderControl::applyClip(const Frame& frame) {
 void WaylandRenderControl::frameDrawn(const Frame& frame, bool tracked) {
 	const auto size = frame.buffer->size;
 	std::optional<QRegion> changed;
-	if (tracked && frame.damage) changed = bufferRegion(*frame.damage, frame.scale, size);
+	if (tracked && frame.damage) changed = scaledRegion(*frame.damage, frame.pixelRatio, size);
 	this->pool.drawn(frame.buffer, changed);
 	if (frame.clip.isEmpty()) return;
 
 	const auto unpainted = changed.value_or(QRect(QPoint(), size)) - frame.clip;
-	this->tracker->damageAfterPresent(windowRegion(unpainted, frame.scale));
+	this->tracker->damageAfterPresent(windowRegion(unpainted, frame.pixelRatio));
 }
 
 void WaylandRenderControl::drawFrame(Frame& frame) {
@@ -794,7 +795,7 @@ void WaylandRenderControl::drawFrame(Frame& frame) {
 	tracked = partial && !frame.repaint && !wrapped && measured && frame.damage
 	       && frame.decoration.isNull();
 	if (tracked) {
-		const auto changed = bufferRegion(*frame.damage, frame.scale, frame.buffer->size);
+		const auto changed = scaledRegion(*frame.damage, frame.pixelRatio, frame.buffer->size);
 		frame.clip = WaylandRenderControl::clipRect(frame, changed);
 	}
 
@@ -878,7 +879,11 @@ bool WaylandRenderControl::commitFrame(
 	}
 
 	auto ref = WlBufferRef(frame.buffer->buffer->buffer(), frame.surfaceSize);
-	waylandWindow->safeCommit(&ref, frame.damage.value_or(QRect(QPoint(), frame.surfaceSize)));
+	// QWaylandWindow::commit() takes surface coordinates, the damage is in logical ones.
+	const auto surfaceScale = frame.pixelRatio / frame.scale;
+	auto damage = QRegion(QRect(QPoint(), frame.surfaceSize));
+	if (frame.damage) damage = scaledRegion(*frame.damage, surfaceScale, frame.surfaceSize);
+	waylandWindow->safeCommit(&ref, damage);
 	// Keep the damage until safeCommit() accepts a buffer.
 	if (!ref.busy()) {
 		PresentationTracker::cancel(feedback);

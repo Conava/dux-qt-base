@@ -136,6 +136,8 @@ private:
 		QSize surfaceSize;
 		QSize contentSize;
 		qreal scale = 1;
+		// Buffer pixels per logical pixel; scale is per surface unit and leaves out QT_SCALE_FACTOR.
+		qreal pixelRatio = 1;
 		QImage decoration;
 		QPoint decorationOffset;
 		QColor color;
