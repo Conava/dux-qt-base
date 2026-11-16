@@ -13,6 +13,7 @@
 #include <qregion.h>
 #include <qsemaphore.h>
 #include <qsize.h>
+#include <qsocketnotifier.h>
 #include <qtclasshelpermacros.h>
 #include <qtimer.h>
 #include <qtmetamacros.h>
@@ -128,11 +129,18 @@ public:
 private slots:
 	void scheduleFrame();
 	void onRenderRequested();
+	void onFenceSignaled();
 	void trimBuffers();
 
 private:
 	struct Frame {
+		Frame() = default;
+		~Frame();
+		Q_DISABLE_COPY_MOVE(Frame);
+
 		SurfaceBuffer* buffer = nullptr;
+		// Signals once the GPU has drawn the frame, -1 when it has; see WlBuffer::createRenderFence().
+		int fence = -1;
 		QSize surfaceSize;
 		QSize contentSize;
 		qreal scale = 1;
@@ -194,6 +202,9 @@ private:
 	// Render thread only. Set while partial repaint has the scene wrapped; see attachClip().
 	std::unique_ptr<SceneClip> sceneClip;
 	QTimer trimTimer;
+	// Waits for the fence of pendingFrame, which finishFrame() then commits.
+	QSocketNotifier fenceNotifier {QSocketNotifier::Read};
+	std::shared_ptr<Frame> pendingFrame;
 	bool bufferAwaited = false;
 	bool pixelAttached = false;
 	bool commitRequested = false;

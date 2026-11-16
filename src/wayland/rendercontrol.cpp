@@ -41,6 +41,7 @@
 #include <qsgmaterial.h>
 #include <qsgnode.h>
 #include <qsize.h>
+#include <qsocketnotifier.h>
 #include <qstring.h>
 #include <qsurfaceformat.h>
 #include <qtclasshelpermacros.h>
@@ -48,6 +49,7 @@
 #include <qtmetamacros.h>
 #include <qtypes.h>
 #include <rhi/qrhi.h>
+#include <unistd.h>
 #include <wayland-client-protocol.h>
 
 #include "../core/animationdriver.hpp"
@@ -345,7 +347,12 @@ WaylandRenderControl::WaylandRenderControl(): pool(this) {
 	QObject::connect(this, &QQuickRenderControl::renderRequested, this, &WaylandRenderControl::onRenderRequested);
 	QObject::connect(this, &QQuickRenderControl::sceneChanged, this, &WaylandRenderControl::scheduleFrame);
 	QObject::connect(&this->trimTimer, &QTimer::timeout, this, &WaylandRenderControl::trimBuffers);
+	QObject::connect(&this->fenceNotifier, &QSocketNotifier::activated, this, &WaylandRenderControl::onFenceSignaled);
 	// clang-format on
+}
+
+WaylandRenderControl::Frame::~Frame() {
+	if (this->fence != -1) close(this->fence);
 }
 
 WaylandRenderControl::~WaylandRenderControl() { this->releaseScene(); }
@@ -761,7 +768,7 @@ void WaylandRenderControl::drawFrame(Frame& frame) {
 		this->endFrame();
 		// The buffer is committed without explicit sync. QRhiGles2::endOffscreenFrame() only
 		// flushes, and as of Qt 6.12 QRhiVulkan::endOffscreenFrame() no longer waits for the GPU.
-		if (frame.rendered) frame.buffer->buffer->finish(this->rhi);
+		if (frame.rendered) frame.fence = frame.buffer->buffer->createRenderFence(this->rhi);
 		// The finished frame completed the readback.
 		if (readbackQueued) frame.failed = !copyReadback(this->readback, frame.buffer->shm->image());
 		// Collect changes made during render; WindowDamageTracker::sync() forces full damage with margins.
@@ -825,7 +832,24 @@ void WaylandRenderControl::drawFrame(Frame& frame) {
 	frame.buffer->import->release(this->commandBuffer(), frame.buffer->texture.get());
 }
 
+void WaylandRenderControl::onFenceSignaled() {
+	this->fenceNotifier.setEnabled(false);
+	const auto frame = std::exchange(this->pendingFrame, nullptr);
+	if (!frame) return;
+
+	close(std::exchange(frame->fence, -1));
+	this->finishFrame(frame);
+}
+
 void WaylandRenderControl::finishFrame(const std::shared_ptr<Frame>& frame) {
+	// The GPU is still drawing, and the frame stays in flight until onFenceSignaled() finishes it.
+	if (frame->fence != -1) {
+		this->pendingFrame = frame;
+		this->fenceNotifier.setSocket(frame->fence);
+		this->fenceNotifier.setEnabled(true);
+		return;
+	}
+
 	this->frameInFlight = false;
 	auto* window = this->window();
 	auto* waylandWindow = dynamic_cast<QtWaylandClient::QWaylandWindow*>(window->handle());

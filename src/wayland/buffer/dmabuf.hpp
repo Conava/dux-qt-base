@@ -156,7 +156,7 @@ public:
 
 	[[nodiscard]] bool isCompatible(const WlBufferRequest& request) const override;
 	[[nodiscard]] WlBufferQSGTexture* createQsgTexture(QQuickWindow* window) const override;
-	void finish(QRhi* rhi) const override;
+	[[nodiscard]] int createRenderFence(QRhi* rhi) const override;
 
 private:
 	WlDmaBuffer() noexcept = default;

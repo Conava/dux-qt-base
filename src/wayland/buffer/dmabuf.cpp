@@ -116,6 +116,25 @@ T eglProc(const char* name) {
 	return proc;
 }
 
+// A sync file for the commands issued so far, or -1 without EGL_ANDROID_native_fence_sync.
+int createNativeFence(EGLDisplay display) {
+	static auto* eglCreateSyncKHR = eglProc<PFNEGLCREATESYNCKHRPROC>("eglCreateSyncKHR");
+	static auto* eglDestroySyncKHR = eglProc<PFNEGLDESTROYSYNCKHRPROC>("eglDestroySyncKHR");
+	static auto* eglDupNativeFenceFDANDROID =
+	    eglProc<PFNEGLDUPNATIVEFENCEFDANDROIDPROC>("eglDupNativeFenceFDANDROID");
+
+	if (!eglCreateSyncKHR || !eglDestroySyncKHR || !eglDupNativeFenceFDANDROID) return -1;
+
+	auto* sync = eglCreateSyncKHR(display, EGL_SYNC_NATIVE_FENCE_ANDROID, nullptr);
+	if (sync == EGL_NO_SYNC_KHR) return -1;
+
+	// The flush creates the fence.
+	glFlush();
+	const auto fence = eglDupNativeFenceFDANDROID(display, sync);
+	eglDestroySyncKHR(display, sync);
+	return fence == EGL_NO_NATIVE_FENCE_FD_ANDROID ? -1 : fence;
+}
+
 } // namespace
 
 QDebug& operator<<(QDebug& debug, const FourCCStr& fourcc) {
@@ -966,32 +985,37 @@ WlBufferQSGTexture* WlDmaBuffer::createQsgTexture(QQuickWindow* window) const {
 	return this->createQsgTextureGl(window);
 }
 
-void WlDmaBuffer::finish(QRhi* rhi) const {
+int WlDmaBuffer::createRenderFence(QRhi* rhi) const {
 	if (rhi->backend() != QRhi::OpenGLES2) {
 		rhi->finish();
-		return;
+		return -1;
 	}
 
 	// A driver with implicit sync fences the dmabuf until the GPU is done.
 	if (this->planeCount != 0) {
 		const auto& plane = this->planes[0]; // NOLINT
 		pollfd fenced = {.fd = plane.fd, .events = POLLIN, .revents = 0};
-		if (poll(&fenced, 1, 0) == 0) return;
+		if (poll(&fenced, 1, 0) == 0) return -1;
 	}
 
 	rhi->makeThreadLocalNativeContextCurrent();
 	auto* display = eglGetCurrentDisplay();
-	auto* fence = eglCreateSync(display, EGL_SYNC_FENCE, nullptr);
+	const auto fence = createNativeFence(display);
+	if (fence != -1) return fence;
 
-	// glFinish() spins a core on NVIDIA's driver, a fence wait sleeps.
-	if (fence == EGL_NO_SYNC) {
-		rhi->finish();
-		return;
+	// Without a sync file the wait happens here. QRhiGles2::finish() does nothing outside a
+	// frame, and glFinish() spins a core on NVIDIA's driver while a fence wait sleeps.
+	auto* sync = eglCreateSync(display, EGL_SYNC_FENCE, nullptr);
+
+	if (sync == EGL_NO_SYNC) {
+		glFinish();
+		return -1;
 	}
 
-	const auto status = eglClientWaitSync(display, fence, EGL_SYNC_FLUSH_COMMANDS_BIT, EGL_FOREVER);
-	eglDestroySync(display, fence);
-	if (status != EGL_CONDITION_SATISFIED) rhi->finish();
+	const auto status = eglClientWaitSync(display, sync, EGL_SYNC_FLUSH_COMMANDS_BIT, EGL_FOREVER);
+	eglDestroySync(display, sync);
+	if (status != EGL_CONDITION_SATISFIED) glFinish();
+	return -1;
 }
 
 WlBufferQSGTexture* WlDmaBuffer::createQsgTextureGl(QQuickWindow* window) const {
