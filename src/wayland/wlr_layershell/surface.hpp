@@ -10,6 +10,7 @@
 #include <qwayland-wlr-layer-shell-unstable-v1.h>
 #include <qwindow.h>
 
+#include "../../window/rendercontrol.hpp"
 #include "shell_integration.hpp"
 #include "wlr_layershell.hpp"
 
@@ -80,6 +81,12 @@ private:
 	void zwlr_layer_surface_v1_closed() override;
 
 	QWindow* qwindow();
+	qs::window::WindowRenderControl* renderControl();
+	void resizeToRequest(QSize previous, QSize requested);
+	void applyCompositorSize();
+	void awaitPredictionCommit();
+	void syncPrediction();
+	void onPredictionSynced();
 	// Sends OnDemand as None until the next commit, or the next one with a buffer if `untilMapped`.
 	void holdKeyboardFocus(bool untilMapped);
 	void onCommitted(bool buffer);
@@ -88,6 +95,11 @@ private:
 	LayerSurfaceBridge* bridge;
 	bool configured = false;
 	QSize size;
+	QSize compositorSize;
+	quint32 prediction = 0;
+	quint32 syncedPrediction = 0;
+	bool verifying = false;
+	wl_callback* predictionSync = nullptr;
 	QMetaObject::Connection commitConnection;
 	bool keyboardFocusHeld = false;
 	bool awaitingMap = false;

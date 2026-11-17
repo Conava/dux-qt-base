@@ -10,6 +10,7 @@
 #include <private/qwaylandsurface_p.h>
 #include <private/qwaylandwindow_p.h>
 #include <qlogging.h>
+#include <qnamespace.h>
 #include <qobject.h>
 #include <qrect.h>
 #include <qsize.h>
@@ -18,6 +19,7 @@
 #include <qvariant.h>
 #include <qwayland-wlr-layer-shell-unstable-v1.h>
 #include <qwindow.h>
+#include <wayland-client-protocol.h>
 #include <wayland-xdg-shell-client-protocol.h>
 
 #include "../../window/panelinterface.hpp"
@@ -71,6 +73,11 @@ toWaylandKeyboardFocus(const WlrKeyboardFocus::Enum& focus) noexcept {
 	    anchors.horizontalConstraint() ? 0 : std::max(1, size.width()),
 	    anchors.verticalConstraint() ? 0 : std::max(1, size.height())
 	);
+}
+
+// A compositor that sized the axis differently from the last request keeps deciding it.
+[[nodiscard]] qint32 honoredExtent(qint32 previous, qint32 current, qint32 requested) noexcept {
+	return requested > 0 && previous == current ? requested : current;
 }
 
 } // namespace
@@ -191,24 +198,36 @@ LayerSurface::~LayerSurface() {
 		this->bridge->surface = nullptr;
 	}
 
+	// NOLINTNEXTLINE(misc-include-cleaner)
+	if (this->predictionSync) wl_callback_destroy(this->predictionSync);
 	this->destroy();
 }
 
 void LayerSurface::zwlr_layer_surface_v1_configure(quint32 serial, quint32 width, quint32 height) {
 	this->ack_configure(serial);
 
-	this->size = QSize(static_cast<qint32>(width), static_cast<qint32>(height));
+	this->compositorSize = QSize(static_cast<qint32>(width), static_cast<qint32>(height));
 	if (!this->configured) {
 		this->configured = true;
+		this->size = this->compositorSize;
 		this->window()->resizeFromApplyConfigure(this->size);
 #if QT_VERSION < QT_VERSION_CHECK(6, 9, 0)
 		this->window()->sendRecursiveExposeEvent();
 #else
 		this->window()->updateExposure();
 #endif
-	} else {
-		this->window()->applyConfigureWhenPossible();
+		return;
 	}
+
+	if (this->verifying) return;
+	this->applyCompositorSize();
+}
+
+void LayerSurface::applyCompositorSize() {
+	if (this->size == this->compositorSize) return;
+
+	this->size = this->compositorSize;
+	this->window()->applyConfigureWhenPossible();
 }
 
 void LayerSurface::zwlr_layer_surface_v1_closed() { this->window()->window()->close(); }
@@ -219,6 +238,11 @@ void LayerSurface::applyConfigure() { this->window()->resizeFromApplyConfigure(t
 
 QWindow* LayerSurface::qwindow() { return this->window()->window(); }
 
+qs::window::WindowRenderControl* LayerSurface::renderControl() {
+	auto* window = qobject_cast<QsQuickWindowBase*>(this->qwindow());
+	return window ? window->renderControl() : nullptr;
+}
+
 void LayerSurface::commit() {
 	const auto& p = this->bridge->state;
 	auto& c = this->committed;
@@ -227,6 +251,10 @@ void LayerSurface::commit() {
 		auto size =
 		    constrainedSize(p.anchors, QHighDpi::toNativePixels(p.implicitSize, this->qwindow()));
 		this->set_size(size.width(), size.height());
+		this->resizeToRequest(
+		    constrainedSize(c.anchors, QHighDpi::toNativePixels(c.implicitSize, this->qwindow())),
+		    size
+		);
 	}
 
 	if (p.anchors != c.anchors) {
@@ -259,6 +287,63 @@ void LayerSurface::commit() {
 	c.keyboardFocus = keyboardFocus;
 }
 
+// Otherwise the commit carrying the request attaches a buffer of the old size.
+// The threaded render loop can still commit a frame of the old size after the resize.
+void LayerSurface::resizeToRequest(QSize previous, QSize requested) {
+	if (!this->configured) return;
+	if (!this->renderControl()) return;
+
+	const auto size = QSize(
+	    honoredExtent(previous.width(), this->size.width(), requested.width()),
+	    honoredExtent(previous.height(), this->size.height(), requested.height())
+	);
+
+	if (size == this->size) return;
+
+	this->size = size;
+	this->window()->resizeFromApplyConfigure(size);
+	++this->prediction;
+	if (!std::exchange(this->verifying, true)) this->awaitPredictionCommit();
+}
+
+void LayerSurface::awaitPredictionCommit() {
+	QObject::connect(
+	    this->renderControl(),
+	    &qs::window::WindowRenderControl::committed,
+	    this,
+	    &LayerSurface::syncPrediction,
+	    Qt::SingleShotConnection
+	);
+}
+
+// A commit that changes the size is answered before the sync, so silence means the old size stands.
+void LayerSurface::syncPrediction() {
+	// NOLINTBEGIN(misc-include-cleaner)
+	static const wl_callback_listener listener = {
+	    .done = [](void* data, wl_callback* callback, quint32 /*time*/) {
+		    wl_callback_destroy(callback);
+		    static_cast<LayerSurface*>(data)->onPredictionSynced();
+	    },
+	};
+
+	this->syncedPrediction = this->prediction;
+	this->predictionSync = wl_display_sync(this->window()->display()->wl_display());
+	wl_callback_add_listener(this->predictionSync, &listener, this);
+	// NOLINTEND(misc-include-cleaner)
+}
+
+void LayerSurface::onPredictionSynced() {
+	this->predictionSync = nullptr;
+
+	if (this->syncedPrediction != this->prediction) {
+		this->awaitPredictionCommit();
+		return;
+	}
+
+	this->verifying = false;
+	this->applyCompositorSize();
+}
+
 void LayerSurface::releaseKeyboardFocus() {
 	if (this->committed.keyboardFocus != WlrKeyboardFocus::OnDemand) return;
 
@@ -267,8 +352,7 @@ void LayerSurface::releaseKeyboardFocus() {
 }
 
 void LayerSurface::holdKeyboardFocus(bool untilMapped) {
-	auto* window = qobject_cast<QsQuickWindowBase*>(this->qwindow());
-	auto* control = window ? window->renderControl() : nullptr;
+	auto* control = this->renderControl();
 	if (!control) {
 		static auto logged = false;
 		if (!std::exchange(logged, true)) {
