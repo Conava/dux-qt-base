@@ -52,6 +52,7 @@ protected:
 
 private:
 	void incubateBetweenFrames();
+	void scheduleSlice();
 
 	QChronoTimer wake;
 	QPointer<QSGRenderLoop> renderLoop = nullptr;

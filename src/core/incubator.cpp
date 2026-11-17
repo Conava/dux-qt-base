@@ -69,8 +69,7 @@ void QsIncubationController::initLoop() {
 		// clang-format off
 		QObject::connect(&this->wake, &QChronoTimer::timeout, this, &QsIncubationController::incubate);
 		QObject::connect(frameDriver, &qs::core::FrameAnimationDriver::betweenFrames, this, [this] {
-			if (!this->incubatingObjectCount()) return;
-			QMetaObject::invokeMethod(this, &QsIncubationController::incubate, Qt::QueuedConnection);
+			if (this->incubatingObjectCount()) this->scheduleSlice();
 		});
 		// clang-format on
 		return;
@@ -175,14 +174,20 @@ void QsIncubationController::incubateBetweenFrames() {
 		static_cast<QQmlIncubatorPrivate*>(engine->incubatorList.first())->incubate(interrupt);
 	} while (this->incubatingObjectCount() && !interrupt.shouldInterrupt());
 
-	if (this->incubatingObjectCount()) {
-		QMetaObject::invokeMethod(this, &QsIncubationController::incubate, Qt::QueuedConnection);
-	}
+	if (this->incubatingObjectCount()) this->scheduleSlice();
+}
+
+// A queued call is delivered before the event loop polls again, so chained slices would starve input
+// and frame timers for the whole build. A zero timer runs once pending events are handled.
+void QsIncubationController::scheduleSlice() {
+	if (this->wake.isActive()) return;
+	this->wake.setInterval(std::chrono::nanoseconds(0));
+	this->wake.start();
 }
 
 void QsIncubationController::incubatingObjectCountChanged(int count) {
 	if (count && qs::core::FrameAnimationDriver::instance()) {
-		QMetaObject::invokeMethod(this, &QsIncubationController::incubate, Qt::QueuedConnection);
+		this->scheduleSlice();
 		return;
 	}
 
