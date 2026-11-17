@@ -386,7 +386,7 @@ private:
 	[[nodiscard]] bool shouldBlockRead() const;
 	[[nodiscard]] FileViewReader* liveReader() const;
 	[[nodiscard]] FileViewWriter* liveWriter() const;
-	[[nodiscard]] const FileViewData& writeCmpData() const;
+	[[nodiscard]] const FileViewData* writeCmpData() const;
 
 	FileViewState state;
 	quint64 stateGeneration = 0;

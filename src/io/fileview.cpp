@@ -284,6 +284,7 @@ void FileViewWriter::write(
 	if (doAtomicWrite) {
 		if (!reinterpret_cast<QSaveFile*>(file.get())->commit()) {
 			qmlWarning(view) << "Write of " << state.path << " failed: Atomic commit failed.";
+			state.error = FileViewError::Unknown;
 		}
 	}
 }
@@ -566,8 +567,14 @@ FileViewWriter* FileView::liveWriter() const {
 	return dynamic_cast<FileViewWriter*>(this->liveOperation);
 }
 
-const FileViewData& FileView::writeCmpData() const {
-	return this->writeData.isEmpty() ? this->state.data : this->writeData;
+const FileViewData* FileView::writeCmpData() const {
+	if (!this->writeData.isEmpty()) return &this->writeData;
+	// An unread path, a failed read or write, a load in flight or a pending empty write
+	// leave state.data stale.
+	if (!this->mPrepared || this->state.error != FileViewError::Success || this->liveOperation) {
+		return nullptr;
+	}
+	return &this->state.data;
 }
 
 QByteArray FileView::data() {
@@ -597,7 +604,8 @@ QString FileView::text() {
 }
 
 void FileView::setData(const QByteArray& data) {
-	if (this->writeCmpData().operator const QByteArray&() == data) return;
+	if (const auto* cmp = this->writeCmpData(); cmp && cmp->operator const QByteArray&() == data)
+		return;
 	this->writeData = data;
 
 	if (this->bBlockWrites) this->saveSync();
@@ -605,7 +613,7 @@ void FileView::setData(const QByteArray& data) {
 }
 
 void FileView::setText(const QString& text) {
-	if (this->writeCmpData().operator const QString&() == text) return;
+	if (const auto* cmp = this->writeCmpData(); cmp && cmp->operator const QString&() == text) return;
 	this->writeData = text;
 
 	if (this->bBlockWrites) this->saveSync();

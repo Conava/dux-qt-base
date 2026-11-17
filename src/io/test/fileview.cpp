@@ -202,4 +202,66 @@ void TestFileView::waitedWriteKeepsCallbackWrite() {
 	QVERIFY(!view.waitForJob());
 }
 
+void TestFileView::emptyWriteReplacesUnreadFile_data() {
+	QTest::addColumn<bool>("preload");
+	QTest::newRow("unread") << false;
+	QTest::newRow("loading") << true;
+}
+
+void TestFileView::emptyWriteReplacesUnreadFile() {
+	QFETCH(const bool, preload);
+	auto dir = QTemporaryDir();
+	QVERIFY(dir.isValid());
+	auto file = QFile(dir.filePath("note"));
+	QVERIFY(file.open(QFile::WriteOnly));
+	QCOMPARE(file.write("old"), 3);
+	file.close();
+
+	auto view = FileView();
+	view.bindablePrintErrors().setValue(false);
+	QVERIFY(view.setProperty("__preload", preload));
+	view.setPath(file.fileName());
+	auto saves = QSignalSpy(&view, &FileView::saved);
+
+	view.setText(QString());
+	QTRY_COMPARE(saves.count(), 1);
+	QVERIFY(file.open(QFile::ReadOnly));
+	QCOMPARE(file.readAll(), QByteArray());
+}
+
+void TestFileView::writeAfterPendingEmptyWrite() {
+	auto dir = QTemporaryDir();
+	QVERIFY(dir.isValid());
+	auto file = QFile(dir.filePath("note"));
+	QVERIFY(file.open(QFile::WriteOnly));
+	QCOMPARE(file.write("old"), 3);
+	file.close();
+
+	auto view = FileView();
+	view.bindablePrintErrors().setValue(false);
+	view.setPath(file.fileName());
+	QVERIFY(view.waitForJob());
+	auto saves = QSignalSpy(&view, &FileView::saved);
+
+	view.setText(QString());
+	view.setText(QStringLiteral("old"));
+	QTRY_COMPARE(saves.count(), 2);
+	QVERIFY(file.open(QFile::ReadOnly));
+	QCOMPARE(file.readAll(), QByteArray("old"));
+}
+
+void TestFileView::emptyWriteCreatesMissingFile() {
+	auto dir = QTemporaryDir();
+	QVERIFY(dir.isValid());
+	auto view = FileView();
+	view.bindablePrintErrors().setValue(false);
+	view.setPath(dir.filePath("missing"));
+	QVERIFY(view.waitForJob());
+	auto saves = QSignalSpy(&view, &FileView::saved);
+
+	view.setText(QString());
+	QTRY_COMPARE(saves.count(), 1);
+	QVERIFY(QFile::exists(view.path()));
+}
+
 QTEST_GUILESS_MAIN(TestFileView);

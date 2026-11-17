@@ -19,4 +19,8 @@ private slots:
 	static void readCanDestroyView();
 	static void writeCanDestroyView();
 	static void waitedWriteKeepsCallbackWrite();
+	static void emptyWriteReplacesUnreadFile_data(); // NOLINT(readability-identifier-naming)
+	static void emptyWriteReplacesUnreadFile();
+	static void writeAfterPendingEmptyWrite();
+	static void emptyWriteCreatesMissingFile();
 };
