@@ -23,4 +23,5 @@ private slots:
 	static void emptyWriteReplacesUnreadFile();
 	static void writeAfterPendingEmptyWrite();
 	static void emptyWriteCreatesMissingFile();
+	static void identicalWriteReturnsFalse();
 };

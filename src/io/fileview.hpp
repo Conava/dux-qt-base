@@ -298,7 +298,9 @@ public:
 	/// It acts the same as changing @@path to a new file, except loading the same file.
 	Q_INVOKABLE void reload();
 	/// Write the content of the current @@adapter to the selected file.
-	Q_INVOKABLE void writeAdapter();
+	///
+	/// Returns false if nothing was written, see @@setData().
+	Q_INVOKABLE bool writeAdapter();
 
 	[[nodiscard]] QString path() const;
 	void setPath(const QString& path);
@@ -314,15 +316,21 @@ public:
 	/// @@atomicWrites and @@blockWrites affect the behavior of this function.
 	///
 	/// @@saved(s) or @@saveFailed(s) will be emitted on completion.
-	Q_INVOKABLE void setData(const QByteArray& data);
+	///
+	/// Returns false if nothing was written: no @@path is set or the file is known to hold
+	/// this content already. Neither signal is emitted then.
+	Q_INVOKABLE bool setData(const QByteArray& data);
 	/// Sets the content of the file specified by @@path as text.
 	///
 	/// @@atomicWrites and @@blockWrites affect the behavior of this function.
 	///
 	/// @@saved(s) or @@saveFailed(s) will be emitted on completion.
 	///
+	/// Returns false if nothing was written: no @@path is set or the file is known to hold
+	/// this text already. Neither signal is emitted then.
+	///
 	/// [ArrayBuffer]: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/ArrayBuffer
-	Q_INVOKABLE void setText(const QString& text);
+	Q_INVOKABLE bool setText(const QString& text);
 
 	// Const bindables functions silently do nothing on setValue.
 	[[nodiscard]] QBindable<bool> bindableBlockWrites() { return &this->bBlockWrites; }

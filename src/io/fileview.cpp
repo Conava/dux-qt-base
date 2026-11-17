@@ -603,21 +603,24 @@ QString FileView::text() {
 	return this->state.data;
 }
 
-void FileView::setData(const QByteArray& data) {
+bool FileView::setData(const QByteArray& data) {
 	if (const auto* cmp = this->writeCmpData(); cmp && cmp->operator const QByteArray&() == data)
-		return;
+		return false;
 	this->writeData = data;
 
 	if (this->bBlockWrites) this->saveSync();
 	else this->saveAsync();
+	return !this->targetPath.isEmpty();
 }
 
-void FileView::setText(const QString& text) {
-	if (const auto* cmp = this->writeCmpData(); cmp && cmp->operator const QString&() == text) return;
+bool FileView::setText(const QString& text) {
+	if (const auto* cmp = this->writeCmpData(); cmp && cmp->operator const QString&() == text)
+		return false;
 	this->writeData = text;
 
 	if (this->bBlockWrites) this->saveSync();
 	else this->saveAsync();
+	return !this->targetPath.isEmpty();
 }
 
 void FileView::emitDataChanged() {
@@ -703,13 +706,13 @@ void FileView::setAdapter(FileViewAdapter* adapter) {
 	emit this->adapterChanged();
 }
 
-void FileView::writeAdapter() {
+bool FileView::writeAdapter() {
 	if (!this->mAdapter) {
 		qmlWarning(this) << "Cannot call writeAdapter without an adapter.";
-		return;
+		return false;
 	}
 
-	this->setData(this->mAdapter->serializeAdapter());
+	return this->setData(this->mAdapter->serializeAdapter());
 }
 
 void FileView::onAdapterDestroyed() { this->mAdapter = nullptr; }

@@ -264,4 +264,30 @@ void TestFileView::emptyWriteCreatesMissingFile() {
 	QVERIFY(QFile::exists(view.path()));
 }
 
+void TestFileView::identicalWriteReturnsFalse() {
+	auto dir = QTemporaryDir();
+	QVERIFY(dir.isValid());
+	auto file = QFile(dir.filePath("note"));
+	QVERIFY(file.open(QFile::WriteOnly));
+	QCOMPARE(file.write("old"), 3);
+	file.close();
+
+	auto view = FileView();
+	view.bindablePrintErrors().setValue(false);
+	view.setPath(file.fileName());
+	QVERIFY(view.waitForJob());
+	auto saves = QSignalSpy(&view, &FileView::saved);
+
+	QVERIFY(!view.setText(QStringLiteral("old")));
+	QVERIFY(!view.setData(QByteArray("old")));
+	QVERIFY(view.setText(QStringLiteral("new")));
+	QTRY_COMPARE(saves.count(), 1);
+	QVERIFY(!view.setText(QStringLiteral("new")));
+
+	auto unset = FileView();
+	unset.bindablePrintErrors().setValue(false);
+	QVERIFY(!unset.setText(QStringLiteral("new")));
+	QVERIFY(!unset.setData(QByteArray("new")));
+}
+
 QTEST_GUILESS_MAIN(TestFileView);
