@@ -163,6 +163,7 @@ private:
 		bool pendingDamage = false;
 		qint64 polishNs = 0;
 		qint64 syncNs = 0;
+		qint64 waitNs = 0;
 		qint64 renderNs = 0;
 	};
 
@@ -190,7 +191,7 @@ private:
 	bool drawDecoration(const QImage& image, SurfaceBuffer* buffer, QPoint offset);
 
 	std::unique_ptr<PresentationTracker> presentation;
-	std::unique_ptr<RenderThread> renderThread;
+	std::shared_ptr<RenderThread> renderThread;
 	QSemaphore synchronized;
 	QRhi* rhi = nullptr;
 	SurfaceBufferPool pool;

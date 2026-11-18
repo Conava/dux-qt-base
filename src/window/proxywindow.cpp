@@ -304,6 +304,7 @@ void ProxyWindowBase::setVisibleDirect(bool visible) {
 			if (this->window != nullptr) this->window->setVisible(false);
 			this->bBackerVisibility = false;
 			this->deleteWindow();
+			EngineGeneration::settleLater(this);
 		}
 	} else {
 		if (visible && this->window == nullptr) {
@@ -314,6 +315,7 @@ void ProxyWindowBase::setVisibleDirect(bool visible) {
 			if (visible) this->polishItems();
 			this->window->setVisible(visible);
 			this->bBackerVisibility = visible;
+			if (!visible) EngineGeneration::settleLater(this);
 		}
 	}
 }
@@ -510,6 +512,7 @@ void ProxyWindowBase::setInputOnly(bool inputOnly) {
 	this->mInputOnly = inputOnly;
 	// Swap the pixel and the scene on the next frame.
 	if (this->window != nullptr) this->window->update();
+	if (inputOnly) EngineGeneration::settleLater(this);
 	emit this->inputOnlyChanged();
 }
 

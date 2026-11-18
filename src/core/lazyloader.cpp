@@ -9,6 +9,7 @@
 #include <qqmlincubator.h>
 #include <qtmetamacros.h>
 
+#include "generation.hpp"
 #include "incubator.hpp"
 #include "reload.hpp"
 
@@ -40,6 +41,7 @@ void LazyLoader::setItem(QObject* item) {
 
 	if (this->mItem != nullptr) {
 		this->mItem->deleteLater();
+		EngineGeneration::settleLater(this);
 	}
 
 	this->mItem = item;
@@ -135,32 +137,39 @@ void LazyLoader::setSource(QString source) {
 
 	this->mSource = std::move(source);
 	delete this->mComponent;
-
-	if (!this->mSource.isEmpty()) {
-		auto* context = QQmlEngine::contextForObject(this);
-		this->mComponent = new QQmlComponent(
-		    context == nullptr ? nullptr : context->engine(),
-		    context == nullptr ? this->mSource : context->resolvedUrl(this->mSource)
-		);
-
-		if (this->mComponent->isError()) {
-			qWarning() << this->mComponent->errorString().toStdString().c_str();
-			delete this->mComponent;
-			this->mComponent = nullptr;
-		}
-	} else {
-		this->mComponent = nullptr;
-	}
+	this->mComponent = nullptr;
 
 	emit this->sourceChanged();
 }
 
+// Building the component loads every type the document names, so it waits for the first use.
+void LazyLoader::loadSource() {
+	if (this->mComponent != nullptr || !this->cleanupComponent || this->mSource.isEmpty()) return;
+
+	auto* context = QQmlEngine::contextForObject(this);
+	auto* component = new QQmlComponent(
+	    context == nullptr ? nullptr : context->engine(),
+	    context == nullptr ? this->mSource : context->resolvedUrl(this->mSource)
+	);
+
+	if (component->isError()) {
+		qWarning() << component->errorString().toStdString().c_str();
+		delete component;
+		return;
+	}
+
+	this->mComponent = component;
+}
+
 void LazyLoader::incubateIfReady(bool overrideReloadCheck) {
 	if (!(this->reloadComplete || overrideReloadCheck) || !(this->targetLoading || this->targetActive)
-	    || this->mComponent == nullptr || this->incubator != nullptr)
+	    || this->incubator != nullptr)
 	{
 		return;
 	}
+
+	this->loadSource();
+	if (this->mComponent == nullptr) return;
 
 	this->incubator = new QsQmlIncubator(
 	    this->targetActive ? QQmlIncubator::Synchronous : QQmlIncubator::Asynchronous,

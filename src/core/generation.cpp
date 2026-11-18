@@ -59,6 +59,12 @@ bool startupOnly(const QByteArray& path, const QByteArray& host) {
 	return path == host || path.contains("/libLLVM");
 }
 
+void trimHeap() {
+#ifdef __GLIBC__
+	malloc_trim(0);
+#endif
+}
+
 // Unmaps clean file pages, which the page cache maps back on the next access. A mapping with
 // anonymous pages holds relocated data that only this process has.
 void dropStartupPages() {
@@ -122,6 +128,12 @@ EngineGeneration::EngineGeneration(const QDir& rootPath, QmlScanner scanner, QSt
 	this->engine->addImageProvider("icon", new IconImageProvider());
 	this->engine->addImageProvider("qsimage", new QsImageProvider());
 	this->engine->addImageProvider("qspixmap", new QsPixmapProvider());
+
+	this->settleTimer.setSingleShot(true);
+	this->settleTimer.setInterval(SETTLE_DELAY);
+	QObject::connect(&this->settleTimer, &QTimer::timeout, this, [] {
+		QThreadPool::globalInstance()->start(&trimHeap);
+	});
 
 	QsEnginePlugin::runConstructGeneration(*this);
 }
@@ -252,10 +264,14 @@ void EngineGeneration::settle() const {
 	if (this->engine == nullptr) return;
 
 	this->engine->collectGarbage();
-#ifdef __GLIBC__
-	malloc_trim(0);
-#endif
+	trimHeap();
 	QThreadPool::globalInstance()->start(&dropStartupPages);
+}
+
+void EngineGeneration::settleLater(const QObject* object) {
+	auto* generation = EngineGeneration::findObjectGeneration(object);
+	if (generation == nullptr || generation->destroying) return;
+	generation->settleTimer.start();
 }
 
 void EngineGeneration::setWatchingFiles(bool watching) {

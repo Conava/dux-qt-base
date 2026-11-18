@@ -158,6 +158,7 @@ private slots:
 
 private:
 	void incubateIfReady(bool overrideReloadCheck = false);
+	void loadSource();
 	void waitForObjectCreation();
 
 	bool targetLoading = false;

@@ -12,6 +12,7 @@
 #include <qquickwindow.h>
 #include <qstring.h>
 #include <qtclasshelpermacros.h>
+#include <qtimer.h>
 #include <qurl.h>
 
 #include "incubator.hpp"
@@ -58,6 +59,9 @@ public:
 	// otherwise null.
 	static EngineGeneration* currentGeneration();
 
+	// Returns freed heap pages to the system once `object`'s generation has been quiet for a while.
+	static void settleLater(const QObject* object);
+
 	RootWrapper* wrapper = nullptr;
 	QDir rootPath;
 	QmlScanner scanner;
@@ -97,6 +101,7 @@ private:
 	void settle() const;
 	void updateIncubationMode();
 	QVector<QQuickWindow*> trackedWindows;
+	QTimer settleTimer;
 	bool incubationControllersLocked = false;
 	QHash<const void*, EngineGenerationExt*> extensions;
 

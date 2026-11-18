@@ -5,14 +5,12 @@
 #include <utility>
 
 #include <libdrm/drm_fourcc.h>
-#include <private/qquickanimatorcontroller_p.h>
 #include <private/qquickwindow_p.h>
 #include <private/qsgrenderer_p.h>
 #include <private/qwaylandabstractdecoration_p.h>
 #include <private/qwaylandbuffer_p.h>
 #include <private/qwaylanddisplay_p.h>
 #include <private/qwaylandwindow_p.h>
-#include <qabstractanimation.h>
 #include <qcoreapplication.h>
 #include <qcoreevent.h>
 #include <qelapsedtimer.h>
@@ -369,6 +367,7 @@ void WaylandRenderControl::releaseScene() {
 		this->sceneClip.reset();
 		this->decoration.reset();
 		this->prepareThread(this->thread());
+		this->renderThread->detach(this->window());
 	});
 	this->pool.clear();
 	const auto lost = this->rhi->isDeviceLost();
@@ -511,6 +510,7 @@ bool WaylandRenderControl::initializeScene() {
 			initialized = this->initialize();
 			if (initialized) {
 				manager->initWindow(window);
+				this->renderThread->attach(window);
 				return;
 			}
 			this->invalidate();
@@ -645,6 +645,7 @@ void WaylandRenderControl::renderFrame() {
 	this->frameInFlight = true;
 	this->frameRequested = false;
 	const auto acknowledge = std::exchange(this->damagePresented, false);
+	timer.restart();
 	this->renderThread->submit([this, frame, acknowledge] {
 		QElapsedTimer timer;
 		timer.start();
@@ -667,18 +668,10 @@ void WaylandRenderControl::renderFrame() {
 		);
 	});
 	this->synchronized.acquire();
+	frame->waitNs = timer.nsecsElapsed();
 }
 
-// Animator types run on the render thread; see QSGRenderThread::syncAndRender().
-void WaylandRenderControl::advanceAnimators() {
-	auto* driver = this->renderThread->animatorDriver();
-	if (!driver || !driver->isRunning()) return;
-
-	auto* controller = QQuickWindowPrivate::get(this->window())->animationController.get();
-	controller->lock();
-	driver->advance();
-	controller->unlock();
-}
+void WaylandRenderControl::advanceAnimators() { this->renderThread->advanceAnimators(); }
 
 bool WaylandRenderControl::partialRepaint() const {
 	static const bool disabled = qEnvironmentVariableIsSet("QS_NO_PARTIAL_REPAINT");
@@ -859,9 +852,9 @@ void WaylandRenderControl::finishFrame(const std::shared_ptr<Frame>& frame) {
 
 	if (frameTracingEnabled()) {
 		qCDebug(logFrame) << "frame" << frame->serial << window << "polish_us" << frame->polishNs / 1000
-		                  << "sync_us" << frame->syncNs / 1000 << "render_us" << frame->renderNs / 1000
-		                  << "rendered" << frame->rendered << "clip" << frame->clip << "valid" << valid
-		                  << "failed" << frame->failed;
+		                  << "wait_us" << frame->waitNs / 1000 << "sync_us" << frame->syncNs / 1000
+		                  << "render_us" << frame->renderNs / 1000 << "rendered" << frame->rendered
+		                  << "clip" << frame->clip << "valid" << valid << "failed" << frame->failed;
 	}
 
 	if (!valid) {

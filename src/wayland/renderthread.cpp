@@ -5,9 +5,10 @@
 #include <memory>
 #include <utility>
 
+#include <private/qquickanimatorcontroller_p.h>
+#include <private/qquickwindow_p.h>
 #include <private/qvulkandefaultinstance_p.h>
 #include <qabstractanimation.h>
-#include <qalgorithms.h>
 #include <qcontainerfwd.h>
 #include <qcoreapplication.h>
 #include <qlist.h>
@@ -48,9 +49,20 @@ QRhi* createVulkanDevice(QVulkanInstance* instance, const QByteArrayList& extens
 }
 
 // Leaked so no static destructor ends a thread; acquire() empties it as the application quits.
-QList<RenderThread*>& idleThreads() {
-	static auto* threads = new QList<RenderThread*>(); // NOLINT
+QList<std::shared_ptr<RenderThread>>& idleThreads() {
+	static auto* threads = new QList<std::shared_ptr<RenderThread>>(); // NOLINT
 	return *threads;
+}
+
+QList<std::weak_ptr<RenderThread>>& drawingThreads() {
+	static auto* threads = new QList<std::weak_ptr<RenderThread>>(); // NOLINT
+	return *threads;
+}
+
+// A device per window costs a context, its driver threads and its programs for every surface.
+bool sharingEnabled() {
+	static const bool enabled = qEnvironmentVariable("QS_RENDER_SHARE") != "0";
+	return enabled;
 }
 
 constexpr qsizetype MAX_IDLE_THREADS = 1;
@@ -86,35 +98,68 @@ void RenderThread::prepareWindow(QQuickWindow* window) {
 	if (!window->vulkanInstance()) window->setVulkanInstance(QVulkanDefaultInstance::instance());
 }
 
-std::unique_ptr<RenderThread> RenderThread::acquire(QQuickWindow* window) {
+std::shared_ptr<RenderThread> RenderThread::acquire(QQuickWindow* window) {
 	static auto connected = false;
 	if (!std::exchange(connected, true)) {
 		auto* app = QCoreApplication::instance();
 		QObject::connect(app, &QCoreApplication::aboutToQuit, app, [] {
 			IDLE_CLOSED = true;
-			qDeleteAll(std::exchange(idleThreads(), {}));
+			idleThreads().clear();
 		});
 	}
 
-	auto& idle = idleThreads();
 	const auto format = window->requestedFormat();
-	const auto suits = [&format](const RenderThread* thread) { return thread->format == format; };
-	const auto found = std::ranges::find_if(idle, suits);
-	if (found == idle.end()) return std::make_unique<RenderThread>(window);
+	auto& drawing = drawingThreads();
+	drawing.removeIf([](const std::weak_ptr<RenderThread>& thread) { return thread.expired(); });
 
-	auto thread = std::unique_ptr<RenderThread>(*found);
-	idle.erase(found);
-	RenderThread::prepareWindow(window);
+	if (sharingEnabled()) {
+		for (const auto& candidate: drawing) {
+			const auto thread = candidate.lock();
+			if (thread->format != format || thread->screen != window->screen()) continue;
+			if (!thread->device || thread->device->isDeviceLost()) continue;
+			RenderThread::prepareWindow(window);
+			return thread;
+		}
+	}
+
+	auto& idle = idleThreads();
+	const auto suits = [&format](const std::shared_ptr<RenderThread>& thread) {
+		return thread->format == format;
+	};
+	const auto found = std::ranges::find_if(idle, suits);
+	auto thread = found == idle.end() ? std::make_shared<RenderThread>(window) : *found;
+	if (found != idle.end()) {
+		idle.erase(found);
+		RenderThread::prepareWindow(window);
+	}
+
+	thread->screen = window->screen();
+	drawing.append(thread);
 	return thread;
 }
 
-void RenderThread::recycle(std::unique_ptr<RenderThread> thread) {
-	if (IDLE_CLOSED) return;
+void RenderThread::recycle(std::shared_ptr<RenderThread> thread) {
+	if (IDLE_CLOSED || thread.use_count() > 1) return;
 
+	drawingThreads().removeIf([&thread](const std::weak_ptr<RenderThread>& drawing) {
+		return drawing.lock() == thread;
+	});
 	auto& idle = idleThreads();
-	if (idle.size() >= MAX_IDLE_THREADS) delete idle.takeFirst();
+	if (idle.size() >= MAX_IDLE_THREADS) idle.removeFirst();
 	thread->sweepLater();
-	idle.append(thread.release());
+	idle.append(std::move(thread));
+}
+
+void RenderThread::attach(QQuickWindow* window) { this->windows.append(window); }
+void RenderThread::detach(QQuickWindow* window) { this->windows.removeOne(window); }
+
+// Animator types run on the render thread; see QSGRenderThread::syncAndRender().
+void RenderThread::advanceAnimators() {
+	if (!this->animators || !this->animators->isRunning()) return;
+
+	for (auto* window: this->windows) QQuickWindowPrivate::get(window)->animationController->lock();
+	this->animators->advance();
+	for (auto* window: this->windows) QQuickWindowPrivate::get(window)->animationController->unlock();
 }
 
 void RenderThread::sweepLater() { this->sweepTimer.start(); }

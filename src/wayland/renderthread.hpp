@@ -5,9 +5,12 @@
 #include <utility>
 
 #include <qabstractanimation.h>
+#include <qlist.h>
 #include <qobject.h>
 #include <qoffscreensurface.h>
+#include <qpointer.h>
 #include <qquickwindow.h>
+#include <qscreen.h>
 #include <qsurfaceformat.h>
 #include <qtclasshelpermacros.h>
 #include <qthread.h>
@@ -22,10 +25,17 @@ public:
 	~RenderThread();
 	Q_DISABLE_COPY_MOVE(RenderThread);
 
-	// An idle thread whose device suits `window`, or a new one.
-	static std::unique_ptr<RenderThread> acquire(QQuickWindow* window);
-	// Keeps `thread` for the next window. Its device must hold no scene.
-	static void recycle(std::unique_ptr<RenderThread> thread);
+	// The thread drawing `window`'s screen, else an idle one whose device suits it, else a new one.
+	static std::shared_ptr<RenderThread> acquire(QQuickWindow* window);
+	// Keeps `thread` for the next window once no other window draws on it. The caller's scene
+	// must be gone from its device.
+	static void recycle(std::shared_ptr<RenderThread> thread);
+	// Render thread only.
+	void attach(QQuickWindow* window);
+	// Render thread only.
+	void detach(QQuickWindow* window);
+	// Render thread only. One driver steps the animators of every window drawn here.
+	void advanceAnimators();
 	// Render thread only. Frees what the device's owners released.
 	void freeReleased();
 	// Has the driver drop the buffers it cached from those frees, once they expired there.
@@ -53,6 +63,8 @@ private:
 	void sweep();
 
 	QSurfaceFormat format;
+	QPointer<QScreen> screen;
+	QList<QQuickWindow*> windows;
 	QThread renderThread;
 	QObject worker;
 	std::unique_ptr<QOffscreenSurface> surface;
