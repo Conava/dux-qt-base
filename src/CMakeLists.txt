@@ -18,6 +18,25 @@ target_include_directories(quickshell PUBLIC
 install(TARGETS quickshell LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR})
 install(DIRECTORY ${CMAKE_SOURCE_DIR}/include/dux-qt-base DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 
+# Type info for linters and editors only; the library loads its modules from compiled-in resources.
+set(QS_QML_TYPES_DIR ${CMAKE_INSTALL_FULL_DATADIR}/dux-qt-base/qml)
+set(QS_QML_TYPES_BUILD_DIR ${QT_QML_OUTPUT_DIRECTORY})
+file(RELATIVE_PATH QS_QML_TYPES_LIB_RELATIVE ${CMAKE_INSTALL_FULL_LIBDIR} ${QS_QML_TYPES_DIR})
+file(RELATIVE_PATH QS_QML_TYPES_PREFIX_RELATIVE ${CMAKE_INSTALL_PREFIX} ${QS_QML_TYPES_DIR})
+if(QS_QML_TYPES_PREFIX_RELATIVE MATCHES "^\\.\\./")
+	set(QS_PC_QML_TYPES_DIR ${QS_QML_TYPES_DIR})
+else()
+	set(QS_PC_QML_TYPES_DIR "\${prefix}/${QS_QML_TYPES_PREFIX_RELATIVE}")
+endif()
+
+# Lint scripts find these dirs by the marker, however the path to them is spelled.
+file(MAKE_DIRECTORY ${QT_QML_OUTPUT_DIRECTORY})
+file(TOUCH ${QT_QML_OUTPUT_DIRECTORY}/.dux-qt-base)
+install(DIRECTORY ${QT_QML_OUTPUT_DIRECTORY}/
+	DESTINATION ${CMAKE_INSTALL_DATADIR}/dux-qt-base/qml
+	FILES_MATCHING PATTERN "qmldir" PATTERN "*.qmltypes" PATTERN "*.qml" PATTERN ".dux-qt-base"
+)
+
 configure_file(${CMAKE_SOURCE_DIR}/dux-qt-base.pc.in ${CMAKE_BINARY_DIR}/dux-qt-base.pc @ONLY)
 install(FILES ${CMAKE_BINARY_DIR}/dux-qt-base.pc DESTINATION ${CMAKE_INSTALL_LIBDIR}/pkgconfig)
 

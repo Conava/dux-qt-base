@@ -201,6 +201,19 @@ int parseCommand(int argc, char** argv, CommandState& state) {
 	}
 
 	{
+		auto* sub = cli->add_subcommand(
+		    "tooling",
+		    "Write the files qmlls and qmllint need for a config without launching it.\n"
+		    "A running instance of the config already keeps them current."
+		);
+
+		addConfigSelection(sub);
+		addLoggingOptions(sub, false, true);
+
+		state.subcommand.tooling = sub;
+	}
+
+	{
 		auto* sub = cli->add_subcommand("ipc", "Communicate with other Quickshell instances.")
 		                ->require_subcommand();
 		state.ipc.ipc = sub;

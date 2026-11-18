@@ -1,6 +1,7 @@
 prefix=@CMAKE_INSTALL_PREFIX@
 libdir=@CMAKE_INSTALL_FULL_LIBDIR@
 includedir=@CMAKE_INSTALL_FULL_INCLUDEDIR@
+qmldir=@QS_PC_QML_TYPES_DIR@
 
 Name: dux-qt-base
 Description: Quickshell QML runtime as a shared library with a C entry point

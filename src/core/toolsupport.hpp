@@ -4,8 +4,11 @@
 #include <qdir.h>
 #include <qlist.h>
 #include <qstring.h>
+#include <qtypes.h>
 
 #include "scan.hpp"
+
+class TestToolSupport;
 
 namespace qs::core {
 
@@ -14,6 +17,7 @@ public:
 	static bool updateTooling(const QDir& configRoot, bool keepMirror);
 	static QString
 	updateMirror(const QDir& configRoot, const QmlScanner& scanner, bool copyDocuments);
+	static bool writeTooling(const QDir& configRoot, const QmlScanner& scanner);
 
 private:
 	struct Document {
@@ -23,7 +27,14 @@ private:
 	};
 
 	static QString getQmllsConfig();
-	static bool lockTooling();
+	static QString qmlTypesDir();
+	enum class LockResult : quint8 {
+		Acquired,
+		Contended,
+		Failed,
+	};
+
+	static LockResult lockTooling(bool oneShot = false);
 	static bool updateQmllsConfig(const QDir& configRoot, bool create);
 	static bool mirrorDir(
 	    const QmlScanner& scanner,
@@ -45,6 +56,10 @@ private:
 	static void removeMirrorEntry(const QString& path);
 	static inline bool toolingEnabled = false;
 	static inline QFile* toolingLock = nullptr;
+
+#ifdef QS_TEST
+	friend class ::TestToolSupport;
+#endif
 };
 
 } // namespace qs::core

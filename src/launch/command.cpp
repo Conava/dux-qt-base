@@ -12,7 +12,9 @@
 #include <qdatetime.h>
 #include <qdebug.h>
 #include <qdir.h>
+#include <qfile.h>
 #include <qfileinfo.h>
+#include <qhash.h>
 #include <qjsonarray.h>
 #include <qjsondocument.h>
 #include <qjsonobject.h>
@@ -22,6 +24,7 @@
 #include <qnamespace.h>
 #include <qstandardpaths.h>
 #include <qtenvironmentvariables.h>
+#include <qtextstream.h>
 #include <qtversion.h>
 #include <unistd.h>
 
@@ -29,6 +32,8 @@
 #include "../core/instanceinfo.hpp"
 #include "../core/logging.hpp"
 #include "../core/paths.hpp"
+#include "../core/scan.hpp"
+#include "../core/toolsupport.hpp"
 #include "../io/ipccomm.hpp"
 #include "../ipc/ipc.hpp"
 #include "launch_p.hpp"
@@ -428,6 +433,101 @@ int listInstances(CommandState& cmd) {
 	return 0;
 }
 
+struct ConfigHeader {
+	QString shellId;
+	QHash<QString, QString> envOverrides;
+	QHash<QString, QString> defaultEnv;
+};
+
+// Must parse ShellId and Env like launch(), so the files land in a running instance's vfs dir
+// and the preprocessor sees the same environment.
+bool readConfigHeader(const QString& configPath, ConfigHeader& header) {
+	header.shellId =
+	    QString(QCryptographicHash::hash(configPath.toUtf8(), QCryptographicHash::Md5).toHex());
+
+	auto file = QFile(configPath);
+	if (!file.open(QFile::ReadOnly | QFile::Text)) {
+		qCCritical(logBare) << "Could not open config file" << configPath;
+		return false;
+	}
+
+	auto stream = QTextStream(&file);
+	while (!stream.atEnd()) {
+		auto line = stream.readLine().trimmed();
+		if (line.startsWith("import")) break;
+		if (!line.startsWith("//@ pragma ")) continue;
+
+		auto pragma = line.sliced(11).trimmed();
+		if (pragma.startsWith("ShellId ")) {
+			header.shellId = pragma.sliced(8).trimmed();
+			continue;
+		}
+
+		auto isDefaultEnv = pragma.startsWith("DefaultEnv ");
+		if (!isDefaultEnv && !pragma.startsWith("Env ")) continue;
+
+		auto content = pragma.sliced(isDefaultEnv ? 11 : 4);
+		auto splitIdx = content.indexOf('=');
+		if (splitIdx == -1) {
+			qCCritical(logBare) << "Env pragma" << pragma << "not in the form 'VAR = VALUE'";
+			return false;
+		}
+
+		auto var = content.sliced(0, splitIdx).trimmed();
+		auto val = content.sliced(splitIdx + 1).trimmed();
+		if (isDefaultEnv) header.defaultEnv.insert(var, val);
+		else header.envOverrides.insert(var, val);
+	}
+
+	return true;
+}
+
+int writeTooling(CommandState& cmd) {
+	QString configPath;
+
+	auto r = locateConfigFile(cmd, configPath);
+	if (r != 0) return r;
+
+	auto header = ConfigHeader();
+	if (!readConfigHeader(configPath, header)) return -1;
+
+	auto pathId = QCryptographicHash::hash(configPath.toUtf8(), QCryptographicHash::Md5).toHex();
+	QsPaths::init(header.shellId, pathId, "", "", "");
+
+	// launch() resolves the runtime dir before applying Env pragmas, so they can't move the vfs.
+	if (!QsPaths::instance()->shellVfsDir()) {
+		qCCritical(logBare) << "Could not create the QML tooling dir for" << configPath;
+		return -1;
+	}
+
+	for (auto [var, val]: header.defaultEnv.asKeyValueRange()) {
+		if (!qEnvironmentVariableIsSet(var.toUtf8())) qputenv(var.toUtf8(), val.toUtf8());
+	}
+
+	for (auto [var, val]: header.envOverrides.asKeyValueRange()) {
+		qputenv(var.toUtf8(), val.toUtf8());
+	}
+
+	auto rootPath = QFileInfo(configPath).dir();
+	auto scanner = QmlScanner(rootPath);
+	scanner.scanQmlRoot(configPath);
+
+	if (!scanner.scanErrors.isEmpty()) {
+		for (const auto& error: scanner.scanErrors) {
+			qCCritical(logBare).noquote().nospace()
+			    << "error in " << error.file << ':' << error.line << ": " << error.message;
+		}
+		return -1;
+	}
+
+	if (!qs::core::QmlToolingSupport::writeTooling(rootPath, scanner)) {
+		qCCritical(logBare) << "Could not write QML tooling files for" << configPath;
+		return -1;
+	}
+
+	return 0;
+}
+
 int killInstances(CommandState& cmd) {
 	InstanceLockInfo instance;
 	auto r = selectInstance(cmd, &instance);
@@ -571,6 +671,8 @@ int runCommand(int argc, char** argv) {
 		continuation = listInstances;
 	} else if (*state.subcommand.kill) {
 		continuation = killInstances;
+	} else if (*state.subcommand.tooling) {
+		continuation = writeTooling;
 	} else if (*state.subcommand.msg || *state.ipc.ipc) {
 		continuation = ipcCommand;
 	} else {

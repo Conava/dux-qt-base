@@ -11,10 +11,19 @@ executable: consumers link `libdux-qt-base.so` and call `dqb_main()` from
 - `<libdir>/libdux-qt-base.so.<version>`, plus the `.so.0` and `.so` symlinks
 - `<libdir>/pkgconfig/dux-qt-base.pc`
 - `<prefix>/include/dux-qt-base/dux_qt_base.h`
+- `<datadir>/dux-qt-base/qml/`, the `Quickshell` modules' `qmldir`, `.qmltypes`
+  and `.qml` files (pkg-config variable `qmldir`)
 
-QML modules are compiled into the library. No QML, desktop, or icon files land
-on disk. Drop any `INSTALL_QML_PREFIX` or `INSTALL_QMLDIR` flags carried over
-from a quickshell recipe, they no longer do anything.
+QML modules are compiled into the library, so the files under `qml/` are type
+information for qmllint and qmlls only, and are never loaded at runtime. They
+let a config lint without upstream quickshell installed; the `tooling`
+subcommand (`dms qs tooling -p <config>`) writes the `.qmlls.ini` that points
+at them. The library looks for them next to itself, so a relocated prefix still
+works; dev and `QTBASE=1` builds use the build tree's `qml_modules` instead. A
+`.dux-qt-base` marker file identifies the directory. Ship them in the runtime
+package. No desktop or icon files land on
+disk. Drop any `INSTALL_QML_PREFIX` or `INSTALL_QMLDIR` flags carried over from
+a quickshell recipe, they no longer do anything.
 
 Split packages as runtime (`.so.0`, `.so.<version>`) and dev (`.so` symlink,
 `.pc`, header). Maintained recipes for Arch, Fedora, openSUSE, Debian, Ubuntu

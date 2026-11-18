@@ -2,12 +2,15 @@
 #include <algorithm>
 #include <atomic>
 #include <cerrno>
+#include <memory>
 
+#include <dlfcn.h>
 #include <fcntl.h>
 #include <qbytearray.h>
 #include <qcontainerfwd.h>
 #include <qcryptographichash.h>
 #include <qdatetime.h>
+#include <qdeadlinetimer.h>
 #include <qdebug.h>
 #include <qdir.h>
 #include <qendian.h>
@@ -21,9 +24,11 @@
 #include <qsavefile.h>
 #include <qset.h>
 #include <qtenvironmentvariables.h>
+#include <qthread.h>
 #include <qthreadpool.h>
 #include <qtypes.h>
 
+#include "build.hpp"
 #include "logcat.hpp"
 #include "paths.hpp"
 #include "scan.hpp"
@@ -48,7 +53,7 @@ bool QmlToolingSupport::updateTooling(const QDir& configRoot, bool keepMirror) {
 		return false;
 	}
 
-	if (!QmlToolingSupport::lockTooling()) {
+	if (QmlToolingSupport::lockTooling() != LockResult::Acquired) {
 		return false;
 	}
 
@@ -64,7 +69,7 @@ QString QmlToolingSupport::updateMirror(
 ) {
 	auto* vfs = QsPaths::instance()->shellVfsDir();
 	if (!vfs) return QString();
-	if (!QmlToolingSupport::lockTooling()) return QString();
+	if (QmlToolingSupport::lockTooling() != LockResult::Acquired) return QString();
 
 	// QQmlTypeLoader::addImportPath canonicalizes, so urls built from this must match
 	auto vfsPath = vfs->canonicalPath();
@@ -85,6 +90,35 @@ QString QmlToolingSupport::updateMirror(
 	}
 
 	return vfsPath;
+}
+
+bool QmlToolingSupport::writeTooling(const QDir& configRoot, const QmlScanner& scanner) {
+	auto* vfs = QsPaths::instance()->shellVfsDir();
+	if (!vfs) {
+		qCCritical(logTooling) << "Tooling dir could not be created";
+		return false;
+	}
+
+	auto lock = QmlToolingSupport::lockTooling(true);
+	if (lock == LockResult::Failed) return false;
+
+	// A running instance of this config holds the lock; its files only count once it has linked
+	// the config and built the mirror.
+	if (lock == LockResult::Contended) {
+		auto vfsConfig = QFileInfo(vfs->filePath(".qmlls.ini")).canonicalFilePath();
+		return !vfsConfig.isEmpty()
+		    && QFileInfo(configRoot.filePath(".qmlls.ini")).canonicalFilePath() == vfsConfig
+		    && QFileInfo::exists(vfs->filePath("qs/qmldir"));
+	}
+
+	auto written = QmlToolingSupport::updateQmllsConfig(configRoot, true)
+	            && !QmlToolingSupport::updateMirror(configRoot, scanner, false).isEmpty();
+
+	// Release before process teardown, as a starting instance waits on it.
+	delete QmlToolingSupport::toolingLock;
+	QmlToolingSupport::toolingLock = nullptr;
+
+	return written;
 }
 
 // A boot copies every document, which is most of the mirror's cost on one thread.
@@ -276,37 +310,74 @@ void QmlToolingSupport::removeMirrorEntry(const QString& path) {
 	if (!ok) qCWarning(logTooling) << "Failed to remove old file at" << path;
 }
 
-bool QmlToolingSupport::lockTooling() {
-	if (QmlToolingSupport::toolingLock) return true;
+QmlToolingSupport::LockResult QmlToolingSupport::lockTooling(bool oneShot) {
+	if (QmlToolingSupport::toolingLock) return LockResult::Acquired;
 
 	auto lockPath = QsPaths::instance()->shellVfsDir()->filePath("tooling.lock");
-	auto* file = new QFile(lockPath);
+	auto file = std::make_unique<QFile>(lockPath);
 
 	if (!file->open(QFile::WriteOnly)) {
 		qCCritical(logTooling) << "Could not open tooling lock for write";
-		return false;
+		return LockResult::Failed;
 	}
 
+	// One-shot writers lock from byte 1, so a starting instance can tell them apart and wait
+	// instead of loading without its mirror. They hold it only while writing.
 	struct flock lock = {
 	    .l_type = F_WRLCK,
 	    .l_whence = SEEK_SET, // NOLINT (fcntl.h??)
-	    .l_start = 0,
+	    .l_start = oneShot ? 1 : 0,
 	    .l_len = 0,
 	    .l_pid = 0,
 	};
 
-	if (fcntl(file->handle(), F_SETLK, &lock) == 0) {
-		qCInfo(logTooling) << "Acquired tooling support lock";
-		QmlToolingSupport::toolingLock = file;
-		return true;
-	} else if (errno == EACCES || errno == EAGAIN) {
-		qCInfo(logTooling) << "Tooling support locked by another instance";
-		return false;
-	} else {
-		qCCritical(logTooling).nospace() << "Could not create tooling lock at " << lockPath
-		                                 << " with error code " << errno << ": " << qt_error_string();
-		return false;
+	// Short for an instance, as it blocks startup.
+	auto deadline = QDeadlineTimer(oneShot ? 5000 : 1000);
+	while (fcntl(file->handle(), F_SETLK, &lock) != 0) {
+		if (errno != EACCES && errno != EAGAIN) {
+			qCCritical(logTooling).nospace() << "Could not create tooling lock at " << lockPath
+			                                 << " with error code " << errno << ": " << qt_error_string();
+			return LockResult::Failed;
+		}
+
+		auto holder = lock;
+		if (fcntl(file->handle(), F_GETLK, &holder) != 0) return LockResult::Failed;
+		if (holder.l_type == F_UNLCK) continue;
+
+		if (holder.l_start != 1 || deadline.hasExpired()) {
+			qCInfo(logTooling) << "Tooling support locked by another instance";
+			return LockResult::Contended;
+		}
+
+		QThread::msleep(10);
 	}
+
+	qCInfo(logTooling) << "Acquired tooling support lock";
+	QmlToolingSupport::toolingLock = file.release();
+	return LockResult::Acquired;
+}
+
+// Next to the loaded library first, so a moved prefix still finds them; then the build tree, for
+// dev and QTBASE=1 builds; then the configured prefix.
+QString QmlToolingSupport::qmlTypesDir() {
+	QStringList candidates;
+
+	auto info = Dl_info();
+	// NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
+	if (dladdr(reinterpret_cast<void*>(&QmlToolingSupport::qmlTypesDir), &info) != 0
+	    && info.dli_fname)
+	{
+		candidates.append(QFileInfo(info.dli_fname).dir().filePath(QML_TYPES_LIB_RELATIVE));
+	}
+
+	candidates.append(QML_TYPES_BUILD_DIR);
+	candidates.append(QML_TYPES_DIR);
+
+	for (const auto& dir: candidates) {
+		if (QFileInfo::exists(dir % "/Quickshell/qmldir")) return QDir::cleanPath(dir);
+	}
+
+	return QString();
 }
 
 QString QmlToolingSupport::getQmllsConfig() {
@@ -315,6 +386,10 @@ QString QmlToolingSupport::getQmllsConfig() {
 		// specific patches, e.g. nixos.
 		auto importPaths = QQmlEngine().importPathList();
 		importPaths.removeIf([](const QString& path) { return path.startsWith("qrc:"); });
+
+		// First, so linters see this library's Quickshell types over an installed upstream copy.
+		auto typesDir = QmlToolingSupport::qmlTypesDir();
+		if (!typesDir.isEmpty()) importPaths.prepend(typesDir);
 
 		auto vfsPath = QsPaths::instance()->shellVfsDir()->path();
 		auto importPathsStr = importPaths.join(u':');

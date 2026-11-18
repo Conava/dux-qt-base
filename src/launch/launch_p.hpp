@@ -87,6 +87,7 @@ struct CommandState {
 		CLI::App* list = nullptr;
 		CLI::App* kill = nullptr;
 		CLI::App* msg = nullptr;
+		CLI::App* tooling = nullptr;
 	} subcommand;
 
 	struct {

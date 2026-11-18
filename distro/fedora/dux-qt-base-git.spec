@@ -100,6 +100,7 @@ COMMIT=$(echo "%{version}" | sed -n 's/.*git\([0-9a-f]*\)$/\1/p')
 %doc README.md UPSTREAM.md
 %{_libdir}/libdux-qt-base.so.0
 %{_libdir}/libdux-qt-base.so.0.*
+%{_datadir}/dux-qt-base/
 
 %files devel
 %doc BUILD.md
