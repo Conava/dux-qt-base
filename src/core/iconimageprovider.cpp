@@ -1,13 +1,26 @@
 #include "iconimageprovider.hpp"
 #include <algorithm>
 
+#include <private/qiconloader_p.h>
 #include <qcolor.h>
+#include <qdir.h>
 #include <qicon.h>
 #include <qlogging.h>
 #include <qpainter.h>
 #include <qpixmap.h>
 #include <qsize.h>
 #include <qstring.h>
+
+namespace {
+
+// QIcon::fromTheme keeps the last 100 icons, each holding its full size decode of raster theme
+// files. The image cache already keeps the scaled result.
+QIcon themeIcon(const QString& name) {
+	if (QDir::isAbsolutePath(name)) return QIcon(name);
+	return QIcon(QIconLoader::instance()->iconEngine(name));
+}
+
+} // namespace
 
 QPixmap
 IconImageProvider::requestPixmap(const QString& id, QSize* size, const QSize& requestedSize) {
@@ -30,8 +43,8 @@ IconImageProvider::requestPixmap(const QString& id, QSize* size, const QSize& re
 		}
 	}
 
-	auto icon = QIcon::fromTheme(iconName);
-	if (icon.isNull() && !fallbackName.isEmpty()) icon = QIcon::fromTheme(fallbackName);
+	auto icon = themeIcon(iconName);
+	if (icon.isNull() && !fallbackName.isEmpty()) icon = themeIcon(fallbackName);
 	if (icon.isNull() && !path.isEmpty()) icon = QPixmap(path);
 
 	auto targetSize = requestedSize.isValid() ? requestedSize : QSize(100, 100);

@@ -2,6 +2,9 @@
 #include <chrono>
 #include <utility>
 
+#include <private/qsgrenderloop_p.h>
+#include <private/qv4engine_p.h>
+#include <private/qv4mm_p.h>
 #include <qbytearray.h>
 #include <qcontainerfwd.h>
 #include <qcoreapplication.h>
@@ -36,6 +39,7 @@
 #include <sys/mman.h>
 #endif
 
+#include "animationdriver.hpp"
 #include "iconimageprovider.hpp"
 #include "imageprovider.hpp"
 #include "incubator.hpp"
@@ -54,12 +58,22 @@ static QHash<const QQmlEngine*, EngineGeneration*> g_generations; // NOLINT
 namespace {
 
 constexpr auto SETTLE_DELAY = std::chrono::seconds(10);
+constexpr auto COLLECTION_POLL = std::chrono::milliseconds(100);
+constexpr auto COLLECTION_RETRY = std::chrono::seconds(1);
+constexpr auto MAX_COLLECTION_RETRIES = 30;
 
 // Startup touches far more code and font pages than idle does. Files under the runtime
 // directory sit in memory either way, so dropping their mappings would free nothing.
 bool startupPages(const QByteArray& path) {
 	if (!path.startsWith('/') || path.endsWith(" (deleted)")) return false;
 	return !path.startsWith("/memfd:") && !path.startsWith("/dev/") && !path.startsWith("/run/");
+}
+
+// Timers alone run on a plain timer; the driver only runs for animations.
+bool animating() {
+	if (auto* driver = qs::core::FrameAnimationDriver::instance()) return driver->isRunning();
+	auto* loopDriver = QSGRenderLoop::instance()->animationDriver();
+	return loopDriver == nullptr || loopDriver->isRunning();
 }
 
 void trimHeap() {
@@ -135,7 +149,17 @@ EngineGeneration::EngineGeneration(const QDir& rootPath, QmlScanner scanner, QSt
 
 	this->settleTimer.setSingleShot(true);
 	this->settleTimer.setInterval(SETTLE_DELAY);
-	QObject::connect(&this->settleTimer, &QTimer::timeout, this, [] {
+	QObject::connect(&this->settleTimer, &QTimer::timeout, this, &EngineGeneration::settleSurfaces);
+
+	this->collectionTimer.setInterval(COLLECTION_POLL);
+	QObject::connect(&this->collectionTimer, &QTimer::timeout, this, [this] {
+		if (this->engine != nullptr
+		    && this->engine->handle()->memoryManager->gcStateMachine->inProgress())
+		{
+			return;
+		}
+
+		this->collectionTimer.stop();
 		QThreadPool::globalInstance()->start(&trimHeap);
 	});
 
@@ -272,10 +296,34 @@ void EngineGeneration::settle() const {
 	QThreadPool::globalInstance()->start(&dropStartupPages);
 }
 
+// A closed surface leaves objects only the collector frees, and their pages only trim after that.
+void EngineGeneration::settleSurfaces() {
+	if (this->engine == nullptr) return;
+
+	const auto collect = !qEnvironmentVariableIsSet("QS_NO_SETTLE_GC");
+
+	// A collection step can hold the GUI thread for a few frames.
+	if (collect && animating() && ++this->collectionRetries <= MAX_COLLECTION_RETRIES) {
+		this->settleTimer.start(COLLECTION_RETRY);
+		return;
+	}
+
+	if (!collect || animating()) {
+		QThreadPool::globalInstance()->start(&trimHeap);
+		return;
+	}
+
+	// runGC is incremental in the engine's usual time slices; collectGarbage blocks until done.
+	auto* memory = this->engine->handle()->memoryManager;
+	if (!memory->gcStateMachine->inProgress()) memory->runGC();
+	this->collectionTimer.start();
+}
+
 void EngineGeneration::settleLater(const QObject* object) {
 	auto* generation = EngineGeneration::findObjectGeneration(object);
 	if (generation == nullptr || generation->destroying) return;
-	generation->settleTimer.start();
+	generation->collectionRetries = 0;
+	generation->settleTimer.start(SETTLE_DELAY);
 }
 
 void EngineGeneration::setWatchingFiles(bool watching) {

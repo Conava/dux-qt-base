@@ -99,9 +99,12 @@ private slots:
 private:
 	void postReload();
 	void settle() const;
+	void settleSurfaces();
 	void updateIncubationMode();
 	QVector<QQuickWindow*> trackedWindows;
 	QTimer settleTimer;
+	QTimer collectionTimer;
+	int collectionRetries = 0;
 	bool incubationControllersLocked = false;
 	QHash<const void*, EngineGenerationExt*> extensions;
 

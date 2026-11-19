@@ -22,6 +22,30 @@
 
 QS_LOGGING_CATEGORY(logQmlScanner, "quickshell.qmlscanner", QtWarningMsg);
 
+namespace {
+
+// Loaders and Qt.createComponent name their files in strings, which no import reaches.
+void collectSourceFiles(const QString& line, QVector<QString>& sources) {
+	for (const auto quote: {u'"', u'\''}) {
+		const auto suffix = QString(".qml") + quote;
+		for (auto end = line.indexOf(suffix); end != -1; end = line.indexOf(suffix, end + 1)) {
+			const auto start = line.lastIndexOf(quote, end);
+			if (start == -1) continue;
+			sources.push_back(line.sliced(start + 1, end + 3 - start));
+		}
+	}
+}
+
+QString sourceFilePath(const QDir& root, const QDir& current, const QString& source) {
+	if (!source.startsWith("root:")) return current.filePath(source);
+
+	auto path = source.sliced(5);
+	if (path.startsWith('/')) path = path.sliced(1);
+	return root.filePath(path);
+}
+
+} // namespace
+
 bool QmlScanner::readAndHashFile(const QString& path, QByteArray& data) {
 	auto file = QFile(path);
 	if (!file.open(QFile::ReadOnly)) return false;
@@ -137,6 +161,7 @@ bool QmlScanner::scanQmlFile(const QString& path, bool& singleton, bool& interna
 
 	auto stream = QTextStream(&fileData);
 	auto imports = QVector<QString>();
+	auto sources = QVector<QString>();
 
 	bool inHeader = true;
 	auto ifScopes = QVector<bool>();
@@ -224,6 +249,8 @@ bool QmlScanner::scanQmlFile(const QString& path, bool& singleton, bool& interna
 			}
 		}
 
+		if (!sourceMasked) collectSourceFiles(line, sources);
+
 		if (!hideMask && sourceMasked) overrideText.append("// MASKED: " % rawLine % '\n');
 		else overrideText.append(rawLine % '\n');
 
@@ -281,6 +308,16 @@ bool QmlScanner::scanQmlFile(const QString& path, bool& singleton, bool& interna
 		}
 
 		this->scanDir(cpath);
+	}
+
+	for (const auto& source: sources) {
+		if (source.contains("://")) continue;
+
+		const auto info = QFileInfo(sourceFilePath(this->rootPath, currentdir, source));
+		const auto dir = QDir::cleanPath(info.absolutePath());
+		if (!info.isFile() || !dir.startsWith(this->rootPath.path())) continue;
+
+		this->scanDir(QDir(dir));
 	}
 
 	return true;
