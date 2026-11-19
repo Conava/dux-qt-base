@@ -229,7 +229,9 @@ bool QmlToolingSupport::mirrorEntry(
 
 	auto name = info.fileName();
 	auto isDocument = name.endsWith(".qml") || name.endsWith(".js") || name.endsWith(".mjs");
-	if (!documents || !isDocument) {
+	// A copy costs runtime dir memory; only sources without a usable mtime (the nix store's 1)
+	// need one for the disk cache.
+	if (!documents || !isDocument || info.lastModified().toSecsSinceEpoch() > 1) {
 		return QmlToolingSupport::linkMirrorEntry(path, target, fresh);
 	}
 

@@ -22,6 +22,7 @@
 #include <qqmlincubator.h>
 #include <qquickwindow.h>
 #include <qsystemdetection.h>
+#include <qtenvironmentvariables.h>
 #include <qthreadpool.h>
 #include <qtimer.h>
 #include <qtmetamacros.h>
@@ -54,9 +55,11 @@ namespace {
 
 constexpr auto SETTLE_DELAY = std::chrono::seconds(10);
 
-// Startup runs the host executable and LLVM, then leaves most of their pages untouched.
-bool startupOnly(const QByteArray& path, const QByteArray& host) {
-	return path == host || path.contains("/libLLVM");
+// Startup touches far more code and font pages than idle does. Files under the runtime
+// directory sit in memory either way, so dropping their mappings would free nothing.
+bool startupPages(const QByteArray& path) {
+	if (!path.startsWith('/') || path.endsWith(" (deleted)")) return false;
+	return !path.startsWith("/memfd:") && !path.startsWith("/dev/") && !path.startsWith("/run/");
 }
 
 void trimHeap() {
@@ -69,10 +72,11 @@ void trimHeap() {
 // anonymous pages holds relocated data that only this process has.
 void dropStartupPages() {
 #ifdef Q_OS_LINUX
+	if (qEnvironmentVariableIsSet("QS_NO_PAGE_DROP")) return;
+
 	auto maps = QFile("/proc/self/smaps");
 	if (!maps.open(QFile::ReadOnly)) return;
 
-	const auto host = QFile::symLinkTarget("/proc/self/exe").toLocal8Bit();
 	quintptr start = 0;
 	quintptr end = 0;
 	auto candidate = false;
@@ -86,7 +90,7 @@ void dropStartupPages() {
 			const auto perms = fields.value(1);
 			start = range.value(0).toULongLong(nullptr, 16);
 			end = range.value(1).toULongLong(nullptr, 16);
-			candidate = perms.size() == 4 && perms.at(1) != 'w' && startupOnly(fields.last(), host);
+			candidate = perms.size() == 4 && perms.at(1) != 'w' && startupPages(fields.last());
 			continue;
 		}
 
