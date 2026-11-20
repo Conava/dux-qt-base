@@ -2,6 +2,7 @@
 #include <algorithm>
 
 #include <private/qiconloader_p.h>
+#include <qchar.h>
 #include <qcolor.h>
 #include <qdir.h>
 #include <qicon.h>
@@ -10,6 +11,42 @@
 #include <qpixmap.h>
 #include <qsize.h>
 #include <qstring.h>
+#include <qstringview.h>
+
+// "rev" only changes the string to get past Qt Quick's pixmap cache. It is read as the last
+// parameter only; a name or path ending in "?rev=" or "&rev=" and digits is the one exception.
+IconImageProvider::Request IconImageProvider::parseRequest(const QString& id) {
+	auto rest = QStringView(id);
+
+	const auto revIdx = std::max(rest.lastIndexOf(u"?rev="), rest.lastIndexOf(u"&rev="));
+	if (revIdx != -1) {
+		const auto revision = rest.sliced(revIdx + 5);
+		const auto isDigit = [](QChar c) { return c >= u'0' && c <= u'9'; };
+		if (!revision.isEmpty() && std::ranges::all_of(revision, isDigit)) rest = rest.first(revIdx);
+	}
+
+	auto splitIdx = rest.indexOf(u"?path=");
+	if (splitIdx != -1) {
+		return {
+		    .icon = rest.first(splitIdx).toString(),
+		    .path = rest.sliced(splitIdx + 6).toString(),
+		    .fallback = QString(),
+		    .hasPath = true,
+		};
+	}
+
+	splitIdx = rest.indexOf(u"?fallback=");
+	if (splitIdx != -1) {
+		return {
+		    .icon = rest.first(splitIdx).toString(),
+		    .path = QString(),
+		    .fallback = rest.sliced(splitIdx + 10).toString(),
+		    .hasPath = false,
+		};
+	}
+
+	return {.icon = rest.toString(), .path = QString(), .fallback = QString(), .hasPath = false};
+}
 
 namespace {
 
@@ -24,27 +61,16 @@ QIcon themeIcon(const QString& name) {
 
 QPixmap
 IconImageProvider::requestPixmap(const QString& id, QSize* size, const QSize& requestedSize) {
-	QString iconName;
-	QString fallbackName;
-	QString path;
+	const auto request = IconImageProvider::parseRequest(id);
 
-	auto splitIdx = id.indexOf("?path=");
-	if (splitIdx != -1) {
-		iconName = id.sliced(0, splitIdx);
-		path = id.sliced(splitIdx + 6);
-		path = QString("/%1/%2").arg(path, iconName.sliced(iconName.lastIndexOf('/') + 1));
-	} else {
-		splitIdx = id.indexOf("?fallback=");
-		if (splitIdx != -1) {
-			iconName = id.sliced(0, splitIdx);
-			fallbackName = id.sliced(splitIdx + 10);
-		} else {
-			iconName = id;
-		}
+	QString path;
+	if (request.hasPath) {
+		const auto fileName = request.icon.sliced(request.icon.lastIndexOf('/') + 1);
+		path = QString("/%1/%2").arg(request.path, fileName);
 	}
 
-	auto icon = themeIcon(iconName);
-	if (icon.isNull() && !fallbackName.isEmpty()) icon = themeIcon(fallbackName);
+	auto icon = themeIcon(request.icon);
+	if (icon.isNull() && !request.fallback.isEmpty()) icon = themeIcon(request.fallback);
 	if (icon.isNull() && !path.isEmpty()) icon = QPixmap(path);
 
 	auto targetSize = requestedSize.isValid() ? requestedSize : QSize(100, 100);

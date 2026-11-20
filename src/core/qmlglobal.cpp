@@ -156,6 +156,7 @@ QuickshellGlobal::QuickshellGlobal(QObject* parent): QObject(parent) {
 	QObject::connect(QuickshellTracked::instance(), &QuickshellTracked::screensChanged, this, &QuickshellGlobal::screensChanged);
 
 	QObject::connect(IconThemeIndex::instance(), &IconThemeIndex::themeChanged, this, &QuickshellGlobal::iconThemeChanged);
+	QObject::connect(IconThemeIndex::instance(), &IconThemeIndex::themeRevisionChanged, this, &QuickshellGlobal::iconThemeRevisionChanged);
 	QObject::connect(IconThemeIndex::instance(), &IconThemeIndex::revisionChanged, this, &QuickshellGlobal::iconIndexRevisionChanged);
 	// clang-format on
 
@@ -394,6 +395,8 @@ QString QuickshellGlobal::iconTheme() { return QIcon::themeName(); }
 void QuickshellGlobal::setIconTheme(const QString& theme) {
 	IconThemeIndex::instance()->setTheme(theme);
 }
+
+qint32 QuickshellGlobal::iconThemeRevision() { return IconThemeIndex::instance()->themeRevision(); }
 
 qint32 QuickshellGlobal::iconIndexRevision() { return IconThemeIndex::instance()->revision(); }
 

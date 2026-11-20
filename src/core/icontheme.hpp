@@ -1,5 +1,6 @@
 #pragma once
 
+#include <qcoreevent.h>
 #include <qhash.h>
 #include <qobject.h>
 #include <qrunnable.h>
@@ -30,14 +31,19 @@ public:
 	// Sets Qt's icon theme as well. An empty name returns to the system theme.
 	void setTheme(const QString& theme);
 
+	bool eventFilter(QObject* watched, QEvent* event) override;
+
 	// Indexes the current theme on first use and returns nothing until that scan is done.
 	[[nodiscard]] QString file(const QString& icon);
 	[[nodiscard]] qint32 revision() const { return this->mRevision; }
+	// Counts the changes of the theme name. Unlike revision() it needs no scan.
+	[[nodiscard]] qint32 themeRevision() const { return this->mThemeRevision; }
 
 	static IconThemeIndex* instance();
 
 signals:
 	void themeChanged();
+	void themeRevisionChanged();
 	void revisionChanged();
 
 private slots:
@@ -47,9 +53,15 @@ private slots:
 private:
 	explicit IconThemeIndex();
 
+	void queueFollow();
+	void followTheme();
+	void announce(const QString& current);
 	void index(const QString& theme);
 	void onScanCompleted(const QString& theme, QHash<QString, QString> files);
 
+	QString announcedTheme;
+	bool followQueued = false;
+	qint32 mThemeRevision = 0;
 	QString indexedTheme;
 	QHash<QString, QString> files;
 	qint32 mRevision = 0;
@@ -59,4 +71,8 @@ private:
 	bool scanQueued = false;
 
 	friend class IconThemeScanner;
+
+#ifdef QS_TEST
+	friend class TestIconTheme;
+#endif
 };

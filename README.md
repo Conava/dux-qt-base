@@ -66,6 +66,13 @@ Library lookup order:
 - Icon lookup: `Quickshell.iconTheme`, `Quickshell.iconIndexRevision` and
   `Quickshell.iconFile()`. A background task indexes the theme.
   `iconFile()` reads that index without filesystem access.
+- Icon theme changes: `Quickshell.iconTheme` follows the system's icon theme
+  while none is set, and `Quickshell.iconThemeRevision` increases when it changes.
+  `image://icon/` URLs take `rev` as their last parameter, as in
+  `Quickshell.iconPath("folder") + "?rev=" + Quickshell.iconThemeRevision`,
+  so an image reloads when the theme changes. A platform theme that swaps
+  the icon theme without a theme or palette event (qt6ct, icons alone) is
+  noticed at the next such event, or when a window is shown.
 - String storage: `Quickshell.createStringMap()` stores entries outside the
   JavaScript heap.
 - Animation timing: `Quickshell.frameDelta()`, `Quickshell.springCoefficients()`

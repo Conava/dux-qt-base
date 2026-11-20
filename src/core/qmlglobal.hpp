@@ -142,7 +142,17 @@ class QuickshellGlobal: public QObject {
 	Q_PROPERTY(bool watchFiles READ watchFiles WRITE setWatchFiles NOTIFY watchFilesChanged);
 	/// The name of the icon theme. Setting it replaces the theme of @@iconPath() and @@iconFile().
 	/// An empty name returns to the system's icon theme.
+	///
+	/// Follows the system's icon theme unless a name is set here, by `//@ pragma IconTheme`
+	/// or by `QS_ICON_THEME`. A change is seen when Qt reports a theme or palette change,
+	/// or when a window is shown, and is announced from the event loop.
 	Q_PROPERTY(QString iconTheme READ iconTheme WRITE setIconTheme NOTIFY iconThemeChanged);
+	/// Increases each time a change of @@iconTheme is announced, starting from 0. Changes in
+	/// quick succession can be announced as one. Needs no icon index.
+	/// An image keeps its icon while its source is the same, so append `"?rev=" + iconThemeRevision`
+	/// to the end of a non-empty @@iconPath() string (`"&rev="` after a `fallback`). A string
+	/// that already ended in `?rev=` or `&rev=` and digits loses that ending.
+	Q_PROPERTY(qint32 iconThemeRevision READ iconThemeRevision NOTIFY iconThemeRevisionChanged);
 	/// Increases each time the files @@iconFile() returns may have changed, starting from 0.
 	///
 	/// The icon theme is indexed in the background the first time @@iconFile() is called or
@@ -319,6 +329,8 @@ public:
 	[[nodiscard]] static QString iconTheme();
 	static void setIconTheme(const QString& theme);
 
+	[[nodiscard]] static qint32 iconThemeRevision();
+
 	[[nodiscard]] static qint32 iconIndexRevision();
 
 	[[nodiscard]] static QString clipboardText();
@@ -344,6 +356,7 @@ signals:
 	void workingDirectoryChanged();
 	void watchFilesChanged();
 	void iconThemeChanged();
+	void iconThemeRevisionChanged();
 	void iconIndexRevisionChanged();
 	void clipboardTextChanged();
 

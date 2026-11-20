@@ -5,6 +5,8 @@
 
 #include <qchar.h>
 #include <qcontainerfwd.h>
+#include <qcoreapplication.h>
+#include <qcoreevent.h>
 #include <qdir.h>
 #include <qdiriterator.h>
 #include <qfile.h>
@@ -277,6 +279,10 @@ IconThemeIndex::IconThemeIndex() {
 	this->rescanTimer.setSingleShot(true);
 	this->rescanTimer.setInterval(RESCAN_DELAY);
 	QObject::connect(&this->rescanTimer, &QTimer::timeout, this, &IconThemeIndex::scan);
+
+	// The index is never destroyed, so the application cannot be left with a dead filter.
+	this->announcedTheme = QIcon::themeName();
+	if (auto* app = QCoreApplication::instance()) app->installEventFilter(this);
 }
 
 IconThemeIndex* IconThemeIndex::instance() {
@@ -285,12 +291,60 @@ IconThemeIndex* IconThemeIndex::instance() {
 }
 
 void IconThemeIndex::setTheme(const QString& theme) {
+	// A system change still waiting for its announcement was already readable.
 	const auto previous = QIcon::themeName();
 	QIcon::setThemeName(theme);
 	const auto current = QIcon::themeName();
 
-	if (current != previous) emit this->themeChanged();
-	this->index(current);
+	if (current != previous || current != this->announcedTheme) this->announce(current);
+
+	// A handler may have set another theme.
+	this->index(QIcon::themeName());
+}
+
+// An application filter sees every object's events. Nothing is announced here: a themeChanged
+// handler may delete the window Qt is still delivering to. Qt 6.8 sends ThemeChange to windows
+// only, and its palette event before the name updates. qt6ct, and Qt 6.8 without a window,
+// send neither, so a shown window checks too.
+bool IconThemeIndex::eventFilter(QObject* watched, QEvent* event) {
+	const auto type = event->type();
+
+	if (type == QEvent::ApplicationPaletteChange) {
+		this->queueFollow();
+	} else if (type == QEvent::ThemeChange || (type == QEvent::Show && watched->isWindowType())) {
+		if (QIcon::themeName() != this->announcedTheme) this->queueFollow();
+	}
+
+	return this->QObject::eventFilter(watched, event);
+}
+
+void IconThemeIndex::queueFollow() {
+	if (this->followQueued) return;
+	this->followQueued = true;
+
+	const auto follow = [this] {
+		this->followQueued = false;
+		this->followTheme();
+	};
+	QMetaObject::invokeMethod(this, follow, Qt::QueuedConnection);
+}
+
+// A name the program set hides the system's, so a system change does nothing while one is set.
+void IconThemeIndex::followTheme() {
+	const auto current = QIcon::themeName();
+	if (current != this->announcedTheme) this->announce(current);
+}
+
+void IconThemeIndex::announce(const QString& current) {
+	qCDebug(logIconTheme) << "Icon theme changed from" << this->announcedTheme << "to" << current;
+	this->announcedTheme = current;
+	this->mThemeRevision++;
+
+	// Before the signals: a handler that spins the event loop must not see an older scan published.
+	if (this->started) this->index(current);
+
+	emit this->themeChanged();
+	emit this->themeRevisionChanged();
 }
 
 QString IconThemeIndex::file(const QString& icon) {
