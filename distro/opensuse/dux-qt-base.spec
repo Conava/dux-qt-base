@@ -1,6 +1,7 @@
 %global tag 0.3.2
 %global sover 0
 %global libname libdux-qt-base%{sover}
+%global __requires_exclude_from ^%{_datadir}/dux-qt-base/qml/.*$
 
 Name:           dux-qt-base
 Version:        %{tag}
