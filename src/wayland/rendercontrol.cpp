@@ -5,6 +5,7 @@
 #include <utility>
 
 #include <libdrm/drm_fourcc.h>
+#include <private/qquickrendercontrol_p.h>
 #include <private/qquickwindow_p.h>
 #include <private/qsgrenderer_p.h>
 #include <private/qwaylandabstractdecoration_p.h>
@@ -507,7 +508,13 @@ bool WaylandRenderControl::initializeScene() {
 		window->setGraphicsDevice(QQuickGraphicsDevice::fromRhi(this->rhi));
 		this->prepareThread(this->renderThread->thread());
 		this->renderThread->invoke([this, window, manager, &initialized] {
+			// Before Qt 6.11 initRhi() creates a missing offscreen surface on this thread, a hidden
+			// window whose QWaylandSurface then takes screenRemoved here, after the screen is freed.
+			auto* control = QQuickRenderControlPrivate::get(this);
+			control->offscreenSurface = this->renderThread->fallbackSurface();
 			initialized = this->initialize();
+			// resetRhi() would delete it.
+			control->offscreenSurface = nullptr;
 			if (initialized) {
 				manager->initWindow(window);
 				this->renderThread->attach(window);

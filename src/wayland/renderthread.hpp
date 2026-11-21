@@ -51,6 +51,8 @@ public:
 		QMetaObject::invokeMethod(&this->worker, std::forward<F>(work), Qt::QueuedConnection);
 	}
 	[[nodiscard]] QRhi* rhi() const { return this->device.get(); }
+	// Created on the GUI thread. Null on Vulkan.
+	[[nodiscard]] QOffscreenSurface* fallbackSurface() const { return this->surface.get(); }
 	// Null when rendering on the GUI thread, whose animators follow its own driver.
 	[[nodiscard]] QAnimationDriver* animatorDriver() const { return this->animators.get(); }
 	QThread* thread() { return this->worker.thread(); }
