@@ -29,6 +29,7 @@ BuildRequires:  qt6-base-private-devel
 BuildRequires:  qt6-declarative-private-devel
 BuildRequires:  qt6-waylandclient-private-devel
 BuildRequires:  cli11-devel
+BuildRequires:  cpptrace-devel
 BuildRequires:  spirv-tools
 BuildRequires:  vulkan-headers
 BuildRequires:  wayland-devel

@@ -22,6 +22,8 @@ public:
 	[[nodiscard]] bool active() const;
 	// Returns true if the compositor considers the session to be locked.
 	[[nodiscard]] bool hasCompositorLock() const;
+	// Returns true if unlock() is waiting for the compositor to answer the lock request.
+	[[nodiscard]] bool unlockDeferred() const;
 
 signals:
 	void compositorLocked();
@@ -30,10 +32,12 @@ signals:
 private:
 	void ext_session_lock_v1_locked() override;
 	void ext_session_lock_v1_finished() override;
+	void release();
 
 	QSWaylandSessionLockManager* manager; // static and not dealloc'd
 
 	// true when the compositor determines the session is locked
 	bool secure = false;
 	bool finished = false;
+	bool deferredUnlock = false;
 };

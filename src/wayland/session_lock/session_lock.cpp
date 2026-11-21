@@ -39,9 +39,16 @@ bool SessionLockManager::lock() {
 
 bool SessionLockManager::unlock() {
 	if (!this->isLocked()) return false;
-	this->mLock->unlock();
+	// unlock() reenters here through the unlocked signal.
 	auto* lock = this->mLock;
 	this->mLock = nullptr;
+	lock->unlock();
+
+	if (lock->unlockDeferred()) {
+		lock->setParent(nullptr);
+		return true;
+	}
+
 	delete lock;
 	return true;
 }

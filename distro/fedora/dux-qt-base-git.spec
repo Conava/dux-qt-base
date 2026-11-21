@@ -41,6 +41,9 @@ BuildRequires:  cmake(Qt6WaylandClient)
 BuildRequires:  cmake(Qt6Widgets)
 BuildRequires:  qt6-qtbase-private-devel
 BuildRequires:  pkgconfig(CLI11)
+BuildRequires:  cpptrace-devel
+BuildRequires:  libdwarf-devel
+BuildRequires:  pkgconfig(libzstd)
 BuildRequires:  pkgconfig(egl)
 BuildRequires:  pkgconfig(gbm)
 BuildRequires:  pkgconfig(glib-2.0)

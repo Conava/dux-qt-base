@@ -51,7 +51,7 @@ boption(ASAN "ASAN (dev)" OFF) # note: better output with gcc than clang
 boption(FRAME_POINTERS "Keep Frame Pointers (dev)" ${ASAN})
 
 boption(USE_JEMALLOC "Use jemalloc" OFF)
-boption(CRASH_HANDLER "Crash Handling" OFF)
+boption(CRASH_HANDLER "Crash Handling" ON)
 boption(SOCKETS "Unix Sockets" ON)
 boption(WAYLAND "Wayland" ON)
 boption(WAYLAND_WLR_LAYERSHELL "  Wlroots Layer-Shell" ON REQUIRES WAYLAND)

@@ -8,6 +8,8 @@
   ninja,
   spirv-tools,
   qt6,
+  cpptrace ? null,
+  libunwind,
   cli11,
   wayland,
   wayland-protocols,
@@ -34,6 +36,7 @@
      else "unknown"),
 
   debug ? false,
+  withCrashHandler ? cpptrace != null,
   withQtSvg ? true,
   withWayland ? true,
   withX11 ? true,
@@ -71,6 +74,10 @@
     cli11
   ]
   ++ lib.optional withQtSvg qt6.qtsvg
+  ++ lib.optional withCrashHandler (cpptrace.overrideAttrs (prev: {
+    cmakeFlags = prev.cmakeFlags ++ [ "-DCPPTRACE_UNWIND_WITH_LIBUNWIND=TRUE" ];
+    buildInputs = prev.buildInputs ++ [ libunwind ];
+  }))
   ++ lib.optionals withWayland [ qt6.qtwayland wayland wayland-protocols ]
   ++ lib.optionals (withWayland && libgbm != null) [ libgbm vulkan-headers ]
   ++ lib.optional withX11 libxcb
@@ -84,6 +91,7 @@
     (lib.cmakeFeature "DISTRIBUTOR" "Nix Flake (dux-qt-base)")
     (lib.cmakeBool "DISTRIBUTOR_DEBUGINFO_AVAILABLE" true)
     (lib.cmakeFeature "GIT_REVISION" gitRev)
+    (lib.cmakeBool "CRASH_HANDLER" withCrashHandler)
     (lib.cmakeBool "WAYLAND" withWayland)
     (lib.cmakeBool "SCREENCOPY" (libgbm != null))
     (lib.cmakeBool "WAYLAND_RENDER_CONTROL" (libgbm != null))

@@ -108,6 +108,7 @@ jobs:
             -DCMAKE_INSTALL_PREFIX=/usr \
             -DCMAKE_INSTALL_LIBDIR=lib \
             -DDISTRIBUTOR="AUR (dux-qt-base-bin)" \
+            -DCRASH_HANDLER=OFF \
             -DGIT_REVISION="$TAG"
           cmake --build build
           DESTDIR="$PWD/dest" cmake --install build

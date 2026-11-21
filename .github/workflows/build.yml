@@ -13,9 +13,11 @@ jobs:
           - name: Archlinux
             image: archlinux
             libdir: lib
+            crash_handler: "ON"
           - name: Fedora
             image: fedora:latest
             libdir: lib64
+            crash_handler: "OFF"
     steps:
       - uses: actions/checkout@v4
 
@@ -26,7 +28,7 @@ jobs:
           pacman --noconfirm --noprogressbar -S \
             base-devel cmake ninja pkgconf \
             qt6-base qt6-declarative qt6-wayland qt6-shadertools \
-            spirv-tools cli11 vulkan-headers \
+            spirv-tools cli11 cpptrace vulkan-headers \
             wayland wayland-protocols libdrm libglvnd mesa libxcb libxkbcommon \
             libpipewire pam polkit glib2
 
@@ -50,6 +52,7 @@ jobs:
             -DCMAKE_BUILD_TYPE=RelWithDebInfo \
             -DCMAKE_INSTALL_PREFIX=/usr \
             -DCMAKE_INSTALL_LIBDIR=${{ matrix.libdir }} \
+            -DCRASH_HANDLER=${{ matrix.crash_handler }} \
             -DDISTRIBUTOR="GitHub CI (${{ matrix.name }})" \
             -DGIT_REVISION=${{ github.sha }}
 
