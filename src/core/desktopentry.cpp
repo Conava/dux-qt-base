@@ -446,6 +446,8 @@ DesktopEntry* DesktopEntryManager::byId(const QString& id) {
 }
 
 DesktopEntry* DesktopEntryManager::heuristicLookup(const QString& name) {
+	// an empty name would match every entry without StartupWMClass
+	if (name.isEmpty()) return nullptr;
 	if (auto* entry = this->byId(name)) return entry;
 
 	auto list = this->desktopEntries.values();
