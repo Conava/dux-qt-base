@@ -83,7 +83,8 @@ void trimHeap() {
 }
 
 // Unmaps clean file pages, which the page cache maps back on the next access. A mapping with
-// anonymous pages holds relocated data that only this process has.
+// anonymous pages holds relocated data that only this process has, and smaps counts those
+// under Swap instead of Anonymous once they are swapped out.
 void dropStartupPages() {
 #ifdef Q_OS_LINUX
 	if (qEnvironmentVariableIsSet("QS_NO_PAGE_DROP")) return;
@@ -108,7 +109,14 @@ void dropStartupPages() {
 			continue;
 		}
 
-		if (!candidate || !line.startsWith("Anonymous:")) continue;
+		if (!candidate) continue;
+
+		if (line.startsWith("Anonymous:")) {
+			candidate = line.split(':').value(1).trimmed() == "0 kB";
+			continue;
+		}
+
+		if (!line.startsWith("Swap:")) continue;
 		candidate = false;
 		if (line.split(':').value(1).trimmed() != "0 kB") continue;
 
