@@ -371,7 +371,7 @@ void WaylandRenderControl::releaseScene() {
 		this->renderThread->detach(this->window());
 	});
 	this->pool.clear();
-	const auto lost = this->rhi->isDeviceLost();
+	const auto lost = this->renderThread->deviceLost();
 	this->rhi = nullptr;
 
 	if (lost) {
@@ -528,12 +528,17 @@ bool WaylandRenderControl::initializeScene() {
 	if (!initialized) {
 		this->rhi = nullptr;
 		this->renderThread.reset();
+		if (this->recoveringDevice) {
+			qCWarning(logRenderControl) << "Graphics device still lost for" << window;
+			return false;
+		}
 		emit window->sceneGraphError(
 		    QQuickWindow::ContextNotAvailable,
 		    QStringLiteral("Failed to initialize the render control.")
 		);
 		return false;
 	}
+	this->recoveringDevice = false;
 
 	if (!manager->isReady()) {
 		// clang-format off
@@ -640,7 +645,7 @@ void WaylandRenderControl::renderFrame() {
 	}
 	frame->buffer = this->pool.acquire(pixelSize, alpha);
 	if (!frame->buffer) {
-		this->abortFrame();
+		this->skipFrame();
 		return;
 	}
 	if (decoration) {
@@ -657,7 +662,8 @@ void WaylandRenderControl::renderFrame() {
 		QElapsedTimer timer;
 		timer.start();
 		if (acknowledge && this->tracker) this->tracker->presented();
-		this->beginFrame();
+		this->renderThread->checkGraphicsReset();
+		if (!this->renderThread->deviceLost()) this->beginFrame();
 		frame->failed = !this->rhi->isRecordingFrame();
 		if (!frame->failed) this->sync();
 		frame->syncNs = timer.nsecsElapsed();
@@ -873,9 +879,7 @@ void WaylandRenderControl::finishFrame(const std::shared_ptr<Frame>& frame) {
 	auto committed = false;
 	if (frame->failed) {
 		this->repaintRequested = true;
-		this->abortFrame();
-		// abortFrame() hid the window. A lost device stays lost, so showing it again needs a new one.
-		if (this->rhi->isDeviceLost()) this->releaseScene();
+		this->skipFrame();
 	} else if (frame->rendered) {
 		committed = this->commitFrame(*frame, waylandWindow);
 	} else {
@@ -916,6 +920,7 @@ bool WaylandRenderControl::commitFrame(
 
 	frame.buffer->busy = true;
 	this->presented = true;
+	this->frameFailing = false;
 	if (frame.revision == this->commitRevision) this->commitRequested = false;
 	this->damagePresented = true;
 	emit this->committed(true);
@@ -971,12 +976,19 @@ void WaylandRenderControl::commitPixel(QtWaylandClient::QWaylandWindow* waylandW
 	emit this->committed(true);
 }
 
-void WaylandRenderControl::abortFrame() {
+void WaylandRenderControl::skipFrame() {
 	this->commitWithoutFrame();
-	emit this->window()->sceneGraphError(
-	    QQuickWindow::ContextNotAvailable,
-	    QStringLiteral("Failed to render a frame for the window.")
-	);
+	if (!this->renderThread->deviceLost()) {
+		if (!std::exchange(this->frameFailing, true)) {
+			qCWarning(logRenderControl) << "Failed to render a frame for" << this->window();
+		}
+		return;
+	}
+
+	qCWarning(logRenderControl) << "Graphics device lost for" << this->window() << "- rebuilding the scene";
+	this->recoveringDevice = true;
+	this->releaseScene();
+	this->scheduleFrame();
 }
 
 void WaylandRenderControl::commitWithoutFrame() {

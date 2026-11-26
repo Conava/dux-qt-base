@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <functional>
 #include <memory>
 #include <utility>
@@ -51,6 +52,9 @@ public:
 		QMetaObject::invokeMethod(&this->worker, std::forward<F>(work), Qt::QueuedConnection);
 	}
 	[[nodiscard]] QRhi* rhi() const { return this->device.get(); }
+	// Render thread only. QRhiGles2 notices a GPU reset only in makeCurrent, which it skips while current.
+	void checkGraphicsReset();
+	[[nodiscard]] bool deviceLost() const;
 	// Created on the GUI thread. Null on Vulkan.
 	[[nodiscard]] QOffscreenSurface* fallbackSurface() const { return this->surface.get(); }
 	// Null when rendering on the GUI thread, whose animators follow its own driver.
@@ -76,6 +80,7 @@ private:
 	std::unique_ptr<QRhiTextureRenderTarget> parking;
 	std::unique_ptr<QAnimationDriver> animators;
 	QTimer sweepTimer;
+	std::atomic_bool graphicsReset = false;
 	bool threaded;
 };
 

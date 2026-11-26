@@ -185,7 +185,7 @@ private:
 	void drawFrame(Frame& frame);
 	void finishFrame(const std::shared_ptr<Frame>& frame);
 	bool commitFrame(const Frame& frame, QtWaylandClient::QWaylandWindow* waylandWindow);
-	void abortFrame();
+	void skipFrame();
 	void commitWithoutFrame();
 	QRhiRenderTarget* decorationTarget(QSize size, QRhiTexture::Format format);
 	bool drawDecoration(const QImage& image, SurfaceBuffer* buffer, QPoint offset);
@@ -216,6 +216,8 @@ private:
 	bool frameInFlight = false;
 	bool frameRequested = false;
 	bool damagePresented = false;
+	bool recoveringDevice = false;
+	bool frameFailing = false;
 	quint64 commitRevision = 0;
 	qint64 requestedAt = 0;
 	qint64 inputAt = 0;

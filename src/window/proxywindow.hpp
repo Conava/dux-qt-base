@@ -286,7 +286,10 @@ private slots:
 	void onSceneGraphInitialized();
 
 private:
+	void regrabStaticLayers();
+
 	qs::window::WindowRenderControl* mRenderControl = nullptr;
+	bool mSceneGraphBuilt = false;
 };
 
 class ProxiedWindow: public QsQuickWindowBase {

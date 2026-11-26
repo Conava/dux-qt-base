@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <array>
 #include <functional>
+#include <utility>
 
 #include <private/qquickwindow_p.h>
 #include <qcontainerfwd.h>
@@ -658,6 +659,19 @@ void QsQuickWindowBase::onSceneGraphInitialized() {
 	}
 
 	SCENEGRAPH_INIT_CALLBACKS.clear();
+
+	if (std::exchange(this->mSceneGraphBuilt, true)) this->regrabStaticLayers();
+}
+
+// A rebuilt scene graph hands a live: false ShaderEffectSource an empty layer that never grabs.
+void QsQuickWindowBase::regrabStaticLayers() {
+	QList<QQuickItem*> pending {this->contentItem()};
+	while (!pending.isEmpty()) {
+		auto* item = pending.takeLast();
+		pending.append(item->childItems());
+		if (!item->inherits("QQuickShaderEffectSource") || item->property("live").toBool()) continue;
+		QMetaObject::invokeMethod(item, "scheduleUpdate");
+	}
 }
 
 void QsQuickWindowBase::callOnScenegraphInit(std::function<void(QQuickWindow*)> cb) { // NOLINT

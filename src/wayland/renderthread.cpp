@@ -14,6 +14,7 @@
 #include <qlist.h>
 #include <qnamespace.h>
 #include <qobjectdefs.h>
+#include <qopenglcontext.h>
 #include <qquickgraphicsconfiguration.h>
 #include <qquickwindow.h>
 #include <qsgrendererinterface.h>
@@ -116,7 +117,7 @@ std::shared_ptr<RenderThread> RenderThread::acquire(QQuickWindow* window) {
 		for (const auto& candidate: drawing) {
 			const auto thread = candidate.lock();
 			if (thread->format != format || thread->screen != window->screen()) continue;
-			if (!thread->device || thread->device->isDeviceLost()) continue;
+			if (!thread->device || thread->deviceLost()) continue;
 			RenderThread::prepareWindow(window);
 			return thread;
 		}
@@ -136,6 +137,19 @@ std::shared_ptr<RenderThread> RenderThread::acquire(QQuickWindow* window) {
 	thread->screen = window->screen();
 	drawing.append(thread);
 	return thread;
+}
+
+void RenderThread::checkGraphicsReset() {
+	if (!this->device || this->device->backend() != QRhi::OpenGLES2) return;
+	const auto* handles = static_cast<const QRhiGles2NativeHandles*>(this->device->nativeHandles());
+	auto* context = handles->context;
+	auto* surface = context->surface();
+	if (!surface || context->makeCurrent(surface) || context->isValid()) return;
+	this->graphicsReset = true;
+}
+
+bool RenderThread::deviceLost() const {
+	return this->graphicsReset || (this->device && this->device->isDeviceLost());
 }
 
 void RenderThread::recycle(std::shared_ptr<RenderThread> thread) {
